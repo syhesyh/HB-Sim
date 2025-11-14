@@ -190,7 +190,7 @@ class GPU:
                 compute_energy += (req_gpu_alu_energy + req_gpu_onchip_mem_energy) * self.num_gpu
                     
 
-        #print(f"layer.name: {layer.name}, layer.type: {layer.type}, energy: {energy}, execute_time: {execute_time}")
+        print(f"layer.name: {layer.name}, layer.type: {layer.type}, energy: {energy}, execute_time: {execute_time}")
         return energy, execute_time, mem_energy, compute_energy
 
 
@@ -216,6 +216,8 @@ class PIM:
 
     def execute(self, layer, request_batch=None, pim_profile_table:PIM_Profile_Table=None, hbf_track_table:HBF_Track_Table=None, GPU=None, block_id=0):
         #print(f"PIM execute layer: {layer.name}, type: {layer.type}")
+        mem_energy, compute_energy = 0, 0
+
         if layer.type == LayerType.SpAt_Score_Context:
 
             pim_activated_table=[[[0 for _ in range(self.num_bg_per_pch)] for _ in range(self.num_pch_per_device)] for _ in range(self.num_pim_stack)]
@@ -232,8 +234,9 @@ class PIM:
             # # for kv_head_id, request_clusters in activated_clusters_table.items():
             # #     if kv_head_id < (8//self.num_pim_device):
             # #         continue #只统计一半的设备
-            for request_id, clusters in activated_clusters_table():
+            for request_id, clusters in activated_clusters_table.items():
                 for cluster_id in clusters:
+                    # default kv_head_id is 0
                     key = (request_id, 0, int(cluster_id))
                     if key in cluster_mapping_table: # PIM cluster hit
                         device, pch, bg, _ = cluster_mapping_table[key]
@@ -269,6 +272,8 @@ class PIM:
                     gpu_alu_energy = gpu_flops/ 2* GPU.energy_table['alu']
                     gpu_onchip_mem_energy = (in1+in2+out)*(GPU.energy_table['reg'] + GPU.energy_table['l1'] + GPU.energy_table['l2']) *4 # 4: 4 is scaling factor
                     gpu_energy += (gpu_mem_energy + gpu_alu_energy + gpu_onchip_mem_energy)
+                    mem_energy += gpu_mem_energy * GPU.num_gpu
+                    compute_energy += (gpu_alu_energy + gpu_onchip_mem_energy) * GPU.num_gpu
                 gpu_energy = gpu_energy * GPU.num_gpu
                 
             # PIM execution
@@ -296,6 +301,7 @@ class PIM:
 
             execute_time = 2 * max(pim_execute_time, gpu_execute_time + GPU.mem_init_latency)
             energy = 2 * (pim_energy + gpu_energy)
+            print(f"sparse_enable: {self.sparse_enable}, pim_execute_time: {pim_execute_time}, gpu_execute_time: {gpu_execute_time}, pim_energy: {pim_energy}J, gpu_energy: {gpu_energy}J, total_energy: {energy}J")
 
         elif layer.type == LayerType.SpAt_Similarity:
             n_compute = 0
@@ -321,11 +327,10 @@ class PIM:
         else:
             energy = 0
             execute_time = 0
-
+    
         energy = energy * self.num_pim_device
         execute_time = execute_time
         # update table
-        print(f"sparse_enable: {self.sparse_enable}, pim_execute_time: {pim_execute_time}, gpu_execute_time: {gpu_execute_time}, pim_energy: {pim_energy}J, gpu_energy: {gpu_energy}J, total_energy: {energy}J")
-        return energy, execute_time
+        return energy, execute_time, mem_energy, compute_energy
 
 
