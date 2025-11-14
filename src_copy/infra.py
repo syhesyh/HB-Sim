@@ -90,7 +90,7 @@ class Request_Batch:
 
         return self.request
 
-    def gen_activated_clusters(self, layer_id=1, kv_head_id=0):
+    def gen_activated_clusters(self, layer_id, kv_head_id):
         activated_clusters = {}
         for request_id in self.request.keys():
             ## 生成当前cluster的概率表，进行不放回抽样
@@ -233,7 +233,7 @@ class System:
                     iteration_mem_energy = 0
                     iteration_compute_energy = 0    
                     for layer in self.moe_model:
-                        if layer.type == LayerType.SpAt_Score_Context or layer.type == LayerType.SpAt_Similarity:
+                        if layer.type == LayerType.SpAt_Score_Context:
                             if self.device == DeviceType.GPU and warmup_finish == 1:
                                 energy, latency, mem_energy, compute_energy = self.GPU.execute(layer,self.request_batch)
                             else: # self.device == DeviceType.PIM
@@ -307,7 +307,7 @@ class System:
                         #         iteration_energy += energy * self.n_block / 2
                         #         iteration_latency += latency * self.n_block / 2
                     for layer in self.ffn_model:
-                        if layer.type == LayerType.SpAt_Score_Context or layer.type == LayerType.SpAt_Similarity:
+                        if layer.type == LayerType.SpAt_Score_Context:
                             if self.device == DeviceType.GPU:
                                 energy, latency, mem_energy, compute_energy = self.GPU.execute(layer,self.request_batch)
                             else: # self.device == DeviceType.PIM
@@ -338,7 +338,7 @@ class System:
                                 iteration_latency += latency * self.n_block / 2
                 else: # qwen-3
                     for layer in self.moe_model:
-                        if layer.type == LayerType.SpAt_Score_Context or layer.type == LayerType.SpAt_Similarity:
+                        if layer.type == LayerType.SpAt_Score_Context:
                             if self.device == DeviceType.GPU:
                                 energy, latency, mem_energy, compute_energy = self.GPU.execute(layer,self.request_batch)
                             else: # self.device == DeviceType.PIM

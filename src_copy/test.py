@@ -46,8 +46,8 @@ Hardware_config_PIM = {
     "PIM": make_pim_config(num_pim_device=2, num_pim_stack=4, sparse_enable=False),
 }
 
-Host_request_batch = infra.Request_Batch(0.10, Model)
-for i in range(64):
+Host_request_batch = infra.Request_Batch(0.05, Model)
+for i in range(32):
     Host_request_batch.append(i, 8192+256, 8192+256+4)
 Host_pim_profile_table = None
 Host_hbf_track_table = None
@@ -77,7 +77,7 @@ print(f"gpu_energy: {gpu_system.energy_stats['sum']}, gpu_latency: {gpu_system.l
 #     PIM_request_batch.append(i, 8192+256, 8192+256+64+4)
 # PIM_pim_profile_table = PIM_Profile_Table(Hardware_config_PIM["PIM"])
 # PIM_pim_profile_table.build_profile_table()
-# PIM_hbf_track_table = HBF_Track_Table(32*64)
+# PIM_hbf_track_table = HBF_Track_Table(65536553/4)
 # pim_energy_stats = energy_stats()
 # pim_latency_stats = latency_stats()
 # pim_system = infra.System(pim_energy_stats, pim_latency_stats, Model, Hardware_config_PIM, request_batch=PIM_request_batch, request_stream=None, pim_profile_table=PIM_pim_profile_table, \

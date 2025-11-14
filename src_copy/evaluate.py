@@ -1,0 +1,318 @@
+## Define models and layer.
+## Generate models
+from src.type import *
+from src.config import *
+from src.spat import *
+import copy
+import random
+import numpy as np
+import math
+from collections import defaultdict
+class GPU:
+    def __init__(self):
+        self.energy = 0
+        self.latency = 0
+
+    def execute(self, flops, size):
+        self.energy += 1
+        self.latency += 1
+        return self.energy, self.latency
+
+class COMM:
+    def __init__(self):
+        self.energy = 0
+        self.latency = 0
+
+    def execute(self, flops, size):
+        self.energy += 1
+        self.latency += 1
+        return self.energy, self.latency
+
+class Sparse_PIM:
+    def __init__(self):
+        self.energy = 0
+        self.latency = 0
+
+    def execute(self, flops, size):
+        self.energy += 1
+        self.latency += 1
+        return self.energy, self.latency
+
+class PIM:
+    def __init__(self):
+        self.energy = 0
+        self.latency = 0
+
+    def execute(self, flops, size):
+        self.energy += 1
+        self.latency += 1
+        return self.energy, self.latency
+
+
+
+
+
+class GPU:
+
+    def __init__(self, name: DeviceType, config, request_batch=None, offloading_ratio=0):
+        self.name = name
+        self.num_gpu = config['NUM_DEVICE']
+        self.hbf_en = config['HBF_EN']
+        self.peak_flops = config['FLOPS_PER_DEVICE']
+        self.peak_hbm_bandwidth = config['GPU_HBM_BANDWIDTH']
+        self.peak_hbf_bandwidth = config['GPU_HBF_BANDWIDTH']
+        self.aggregate_memory_capacity = config['MEM_CAPACITY_PER_DEVICE'] * self.num_gpu
+        self.gpu_comm_bandwidth = config['GPU_COMM_BANDWIDTH']
+        self.cpu_comm_bandwidth = config['CPU_COMM_BANDWIDTH']
+        self.energy_table = config['ENERGY_TABLE']
+        self.hbf_memory_bandwidth = config['GPU_HBF_BANDWIDTH'] if self.hbf_en else 0
+        self.hbm_memory_bandwidth = config['GPU_HBM_BANDWIDTH']
+        self.peak_memory_bandwidth = self.hbf_memory_bandwidth if self.hbf_en else self.hbm_memory_bandwidth
+        self.offloading_ratio = offloading_ratio
+        self.gpu_mem_energy = config['ENERGY_TABLE']['hbf'] if self.hbf_en else config['ENERGY_TABLE']['hbm']
+        #self.mem_init_latency = 3*1e-6 if self.hbf_en else 26.4* 1e-9 # 3us HBF tR  /// (29 + 16/4) DRAM latency tras + tfaw/4
+        self.mem_init_latency = 0
+    def execute(self, layer, request_batch=None, block_id=None):
+        #print(f"GPU execute layer: {layer.name}, type: {layer.type}")
+        block_id = 0
+        if request_batch is not None and layer.type == LayerType.SpAt_Score_Context:
+            activated_clusters_table = {}
+            for kv_head_id in range(layer.n_kv_head):
+                activated_clusters_table[kv_head_id] = request_batch.gen_activated_clusters(block_id, kv_head_id)
+                #print(f"activated_clusters_table[{kv_head_id}]: {activated_clusters_table[kv_head_id]}")
+
+        m, n, k= layer.get_infos()
+        operation_intensity = m
+        flops = layer.get_flops()
+        in1, in2, out = layer.get_size()
+        execute_time = 0
+        energy = 0
+        mem_energy = 0
+        compute_energy = 0
+        if layer.type in [LayerType.FC, LayerType.MATMUL, LayerType.NORM, LayerType.ACT]:
+            execute_time = flops/min(operation_intensity*self.peak_memory_bandwidth, self.peak_flops) + self.mem_init_latency
+            gpu_mem_energy = ((in1+out)*self.energy_table['hbm'] + in2*self.energy_table['hbf']) if self.hbf_en else ((in1+in2+out)*self.energy_table['hbm'])
+            gpu_alu_energy = flops/2*self.energy_table['alu']
+            gpu_onchip_mem_energy = (in1+in2+out)*(self.energy_table['reg'] + self.energy_table['l1'] + self.energy_table['l2'])*4 # 4: 4 is scaling factor
+            energy = (gpu_mem_energy + gpu_alu_energy + gpu_onchip_mem_energy) *  self.num_gpu
+            mem_energy = gpu_mem_energy *  self.num_gpu
+            compute_energy = (gpu_alu_energy + gpu_onchip_mem_energy) *  self.num_gpu
+        elif layer.type in [LayerType.ALL_GATHER, LayerType.ALL_REDUCE]:
+            execute_time = (in1+in2+out)/self.gpu_comm_bandwidth
+            gpu_comm_energy = (in1+in2+out)*(self.energy_table['comm'] + self.energy_table['hbm'])
+            gpu_mem_energy = (in1+in2+out)*self.energy_table['hbm']
+            gpu_alu_energy = flops/2*self.energy_table['alu']
+            gpu_onchip_mem_energy = (in1+in2+out)*(self.energy_table['reg'] + self.energy_table['l1'] + self.energy_table['l2'])*4 # 4: 4 is scaling factor
+            energy = (gpu_mem_energy + gpu_alu_energy + gpu_onchip_mem_energy + gpu_comm_energy) *  self.num_gpu
+            mem_energy = gpu_mem_energy *  self.num_gpu
+            compute_energy = (gpu_alu_energy + gpu_onchip_mem_energy + gpu_comm_energy) *  self.num_gpu
+        elif layer.type == LayerType.SpAt_Similarity:
+            head_latency = [0 for _ in range(layer.n_kv_head)]
+            head_energy = [0 for _ in range(layer.n_kv_head)]            
+            for kv_head_id in range(layer.n_kv_head):
+                for request_id in layer.request_batch.request:
+                    m, n, k= layer.get_infos(request_id)
+                    operation_intensity = m
+                    flops = layer.get_flops()
+                    in1, in2, out = layer.get_size()
+                    req_execute_time = flops/min(operation_intensity*self.peak_memory_bandwidth, self.peak_flops)
+                    req_gpu_mem_energy = ((in1+out)*self.energy_table['hbm'] + in2*self.energy_table['hbf']) if self.hbf_en else (in1+in2+out)*self.energy_table['hbm']
+                    req_gpu_alu_energy = flops/2*self.energy_table['alu']
+                    req_gpu_onchip_mem_energy = (in1+in2+out)*(self.energy_table['reg'] + self.energy_table['l1'] + self.energy_table['l2']) *4 # 4: 4 is scaling factor
+                    req_energy = (req_gpu_mem_energy + req_gpu_alu_energy + req_gpu_onchip_mem_energy) 
+                    head_latency[kv_head_id] += req_execute_time
+                    head_energy[kv_head_id] += req_energy
+                    mem_energy += req_gpu_mem_energy 
+                    compute_energy += (req_gpu_alu_energy + req_gpu_onchip_mem_energy) 
+
+            if self.hbf_en:
+                execute_time = max(sum(head_latency[0:3]),sum(head_latency[4:7])) + self.mem_init_latency
+            else:
+                execute_time = max(head_latency) + self.mem_init_latency
+            energy = sum(head_energy)
+
+        elif layer.type ==LayerType.SpAt_Score_Context:
+            head_latency = [0 for _ in range(layer.n_kv_head)]
+            head_energy = [0 for _ in range(layer.n_kv_head)]
+            # 8 head 分到每个device上 latency取max，energy取sum
+            for kv_head_id in range(layer.n_kv_head):
+                
+                for request_id, request_info in layer.request_batch.request.items():
+                    #print(f"request_id: {request_id}")
+                    m, n, k= layer.get_infos(request_id)
+                    operation_intensity = m
+                    flops = layer.get_flops()
+                    in1, in2, out = layer.get_size()
+                    req_kv_head_activated_clusters = activated_clusters_table[kv_head_id][request_id]
+                    #print(f"request_info: {req_kv_head_activated_clusters}")
+                    #print(f"layer.request_id: {layer.request_id}, kv_head_id: {kv_head_id}, req_kv_head_activated_clusters: {req_kv_head_activated_clusters}")
+
+                    # 判断是否需要CPU-Offloading
+                    if self.offloading_ratio > 0:
+                        clusters_in_cpu = (req_kv_head_activated_clusters > (request_info["total_cluster"] * self.offloading_ratio) ).sum()
+                        #print(f"clusters_in_cpu: {clusters_in_cpu}")
+                        cpu_latency = clusters_in_cpu * layer.cluster_size * layer.head_dim / self.cpu_comm_bandwidth
+                        cpu_energy = clusters_in_cpu * layer.cluster_size * layer.head_dim * (self.energy_table['comm'] + self.energy_table['dimm'] + self.energy_table['hbm'])
+                    else:
+                        cpu_latency = 0
+                        cpu_energy = 0
+
+                    gpu_mem_energy = ((in1+out)*self.energy_table['hbm'] + in2*self.energy_table['hbf']) if self.hbf_en else ((in1+in2+out)*self.energy_table['hbm'])
+                    gpu_alu_energy = flops/2*self.energy_table['alu']
+                    gpu_onchip_mem_energy = (in1+in2+out)*(self.energy_table['reg'] + self.energy_table['l1'] + self.energy_table['l2']) *4 # 4: 4 is scaling factor
+                    compute_energy = gpu_mem_energy + gpu_alu_energy + gpu_onchip_mem_energy
+                    compute_latency = flops/min(operation_intensity*self.peak_memory_bandwidth, self.peak_flops)
+                    head_latency[kv_head_id] += (cpu_latency + compute_latency)
+                    head_energy[kv_head_id] += (compute_energy + cpu_energy)
+                    mem_energy += gpu_mem_energy 
+                    compute_energy += (gpu_alu_energy + gpu_onchip_mem_energy)
+
+            if self.hbf_en:
+                execute_time = 2*max(sum(head_latency[0:3]),sum(head_latency[4:7])) + 2*self.mem_init_latency
+            else:
+                execute_time = 2*max(head_latency) + 2*self.mem_init_latency
+            energy = 2*sum(head_energy)
+
+        elif layer.type == LayerType.SpAt_Softmax:
+            head_latency = [0 for _ in range(layer.n_kv_head)]
+            head_energy = [0 for _ in range(layer.n_kv_head)]
+            for kv_head_id in range(layer.n_kv_head):
+                for request_id in layer.request_batch.request.keys():
+                    m, n, k= layer.get_infos(request_id)
+                    operation_intensity = m
+                    flops = layer.get_flops()
+                    in1, in2, out = layer.get_size()
+                    req_execute_time = flops/min(operation_intensity*self.peak_memory_bandwidth, self.peak_flops)
+                    req_gpu_mem_energy = (in1+in2+out)*self.energy_table['hbm']
+                    req_gpu_alu_energy = flops/2*self.energy_table['alu']
+                    req_gpu_onchip_mem_energy = (in1+in2+out)*(self.energy_table['reg'] + self.energy_table['l1'] + self.energy_table['l2'])*4 # 4: 4 is scaling factor
+                    req_energy = (req_gpu_mem_energy + req_gpu_alu_energy + req_gpu_onchip_mem_energy)
+                    head_latency[kv_head_id] += req_execute_time
+                    head_energy[kv_head_id] += req_energy
+                    mem_energy += req_gpu_mem_energy
+                    compute_energy += (req_gpu_alu_energy + req_gpu_onchip_mem_energy)
+                    
+            if self.hbf_en:
+                execute_time = max(sum(head_latency[0:3]), sum(head_latency[4:7])) + self.mem_init_latency
+            else:
+                execute_time = max(head_latency) + self.mem_init_latency
+            energy = sum(head_energy)
+
+        #print(f"layer.name: {layer.name}, layer.type: {layer.type}, energy: {energy}, execute_time: {execute_time}")
+        return energy, execute_time, mem_energy, compute_energy
+
+
+class PIM:
+
+    def __init__(self, name: DeviceType, config, request_batch=None):
+        self.name = name
+        self.sparse_enable = config['SPARSE_ENABLE']
+        self.num_pim_device = config['NUM_PIM_DEVICE']
+        self.num_pim_stack = config['NUM_PIM_STACK']
+        self.num_pch_per_device = config['NUM_PCH_PER_DEVICE']
+        self.num_bg_per_pch = config['NUM_BG_PER_PCH']
+        self.num_row = config['NUM_ROW']
+        self.energy_table = config['ENERGY_TABLE']
+        self.e_row = ENERGY_TABLE['SparsePIM']['row']
+        self.e_read = ENERGY_TABLE['SparsePIM']['read']
+        self.e_compute = ENERGY_TABLE['SparsePIM']['compute']
+        self.n_compute_per_row = 32 if self.sparse_enable else 2
+        self.t_compute = config['t_compute']
+        self.t_row = config['t_row']
+        self.n_bk_per_bg = 4
+        self.n_bk_per_pch = 64
+
+    def execute(self, layer, request_batch=None, pim_profile_table:PIM_Profile_Table=None, hbf_track_table:HBF_Track_Table=None, GPU=None, block_id=0):
+        #print(f"PIM execute layer: {layer.name}, type: {layer.type}")
+        if layer.type == LayerType.SpAt_Score_Context:
+
+            pim_activated_table=[[[0 for _ in range(self.num_bg_per_pch)] for _ in range(self.num_pch_per_device)] for _ in range(self.num_pim_stack)]
+            cluster_mapping_table = pim_profile_table.cluster_mapping_table
+            missing_clusters = defaultdict(lambda: defaultdict(list))
+            missing_clusters_counts = 0
+            hit_clusters_counts = 0
+            activated_clusters_table = {}
+            if request_batch is not None:
+                for kv_head_id in range(layer.n_kv_head):
+                    activated_clusters_table[kv_head_id] = request_batch.gen_activated_clusters(block_id, kv_head_id)
+
+            # PIM cluster hit
+            for kv_head_id, request_clusters in activated_clusters_table.items():
+                if kv_head_id < (8//self.num_pim_device):
+                    continue #只统计一半的设备
+                for request_id, clusters in request_clusters.items():
+                    for cluster_id in clusters:
+                        key = (request_id, kv_head_id, int(cluster_id))
+                        if key in cluster_mapping_table: # PIM cluster hit
+                            device, pch, bg, _ = cluster_mapping_table[key]
+                            pim_profile_table.update(request_id, kv_head_id, cluster_id)
+                            pim_activated_table[device][pch][bg] += 1
+                            hit_clusters_counts += 1
+                        else: # HBF cluster hit
+                            hbf_track_table.update(request_id, kv_head_id, cluster_id)
+                            missing_clusters[kv_head_id][request_id].append(cluster_id)
+                            missing_clusters_counts += 1
+
+
+            print(f"missing_clusters_counts: {missing_clusters_counts}, hit_clusters_counts: {hit_clusters_counts}. hit ratio: {hit_clusters_counts / (hit_clusters_counts + missing_clusters_counts)}")
+            # GPU execution
+            # gpu_flops = layer.get_flops()
+            # in1, in2, out = layer.get_size()
+            m = layer.m
+            operation_intensity = m
+             # GPU execution
+            if missing_clusters_counts > 0:
+                gpu_execute_time = 0
+                gpu_energy = 0
+                for kv_head_id in range(layer.n_kv_head):
+                    if kv_head_id < (8//self.num_pim_device):
+                        continue #只统计一个的设备
+                    for request_id, clusters in missing_clusters[kv_head_id].items():
+                        n = layer.head_dim
+                        k = layer.n_kv_head * len(clusters) * layer.cluster_size
+                        in1=m*n*layer.dbyte
+                        in2=n*k*layer.dbyte
+                        out=m*k*layer.dbyte
+                        gpu_flops = 2*m*n*k
+
+                        gpu_execute_time += gpu_flops/min(operation_intensity * GPU.peak_memory_bandwidth, GPU.peak_flops)
+                        gpu_mem_energy = ((in1+out)*GPU.energy_table['hbm'] + in2*GPU.energy_table['hbf'])
+                        gpu_alu_energy = gpu_flops/ 2* GPU.energy_table['alu']
+                        gpu_onchip_mem_energy = (in1+in2+out)*(GPU.energy_table['reg'] + GPU.energy_table['l1'] + GPU.energy_table['l2']) *4 # 4: 4 is scaling factor
+                        gpu_energy += (gpu_mem_energy + gpu_alu_energy + gpu_onchip_mem_energy)
+                gpu_energy = gpu_energy * GPU.num_gpu
+                
+            # PIM execution
+            if self.sparse_enable: #sparse pim
+                pim_bg_latency = [0 for _ in range(self.num_pim_stack * self.num_pch_per_device * self.num_bg_per_pch)]
+                pim_bg_energy = [0 for _ in range(self.num_pim_stack * self.num_pch_per_device * self.num_bg_per_pch)]
+                for stack in range(self.num_pim_stack):
+                    for pch in range(self.num_pch_per_device):
+                        for bg in range(self.num_bg_per_pch):
+                            pim_bg_latency[stack * self.num_pch_per_device * self.num_bg_per_pch + pch * self.num_bg_per_pch + bg] = pim_activated_table[stack][pch][bg] * (self.t_row + 2*self.t_compute * operation_intensity * self.n_compute_per_row) # 2: 1PE FOR 2Banks
+                            pim_bg_energy[stack * self.num_pch_per_device * self.num_bg_per_pch + pch * self.num_bg_per_pch + bg] = pim_activated_table[stack][pch][bg] * (self.e_row + self.e_read * self.n_compute_per_row + self.e_compute * operation_intensity * self.n_compute_per_row) * self.n_bk_per_bg
+                pim_execute_time =  max(pim_bg_latency) 
+                pim_energy = sum(pim_bg_energy) * self.num_pim_device 
+            else: # pim
+                pim_pch_latency = [0 for _ in range(self.num_pim_stack * self.num_pch_per_device)]
+                pim_pch_energy = [0 for _ in range(self.num_pim_stack * self.num_pch_per_device)]
+                for stack in range(self.num_pim_stack):
+                    for pch in range(self.num_pch_per_device):
+                        for bg in range(self.num_bg_per_pch):
+                            pim_pch_latency[stack * self.num_pch_per_device + pch] += pim_activated_table[stack][pch][bg] * (self.t_row + 2 * self.t_compute * operation_intensity  * self.n_compute_per_row)
+                            pim_pch_energy[stack * self.num_pch_per_device + pch] += pim_activated_table[stack][pch][bg] * (self.e_row + self.e_read * self.n_compute_per_row + self.e_compute * operation_intensity * self.n_compute_per_row) * self.n_bk_per_pch
+                
+                pim_execute_time = max(pim_pch_latency) 
+                pim_energy = sum(pim_pch_energy) * self.num_pim_device 
+
+            execute_time = 2 * max(pim_execute_time, gpu_execute_time + GPU.mem_init_latency)
+            energy = 2 * (pim_energy + gpu_energy)
+        else:
+            energy = 0
+            execute_time = 0
+
+        # update table
+        print(f"sparse_enable: {self.sparse_enable}, pim_execute_time: {pim_execute_time}, gpu_execute_time: {gpu_execute_time}, pim_energy: {pim_energy}J, gpu_energy: {gpu_energy}J, total_energy: {energy}J")
+        return energy, execute_time
+
+
