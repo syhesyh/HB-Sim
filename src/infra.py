@@ -364,7 +364,7 @@ class System:
                         # TODO: more accurate energy and latency calculation
                         self.energy_stats["balance"] += 2 * n_swaps * (2*4*1024*8) * (self.GPU.energy_table['hbm'] + self.GPU.energy_table['hbm']) * self.n_device
                         self.latency_stats["balance"] += 2 * 2 * n_swaps * (2*4*1024*8) / self.GPU.hbm_memory_bandwidth
-            
+                    print(f"n_swaps: {n_swaps}, variance: {initial_variance}, final_variance: {final_variance}")
 
             # dynamic arrival request
             if dynamic_enable:
