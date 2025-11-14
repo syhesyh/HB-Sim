@@ -1,0 +1,381 @@
+## Define models and layer.
+## Generate models
+from ast import Pass
+from src.type import *
+from src.model import *
+from src.spat import *
+from src.stats import *
+from src.evaluate import GPU, PIM, Sparse_PIM
+import copy
+import random
+import numpy as np
+import math
+
+# Model={"name":"llama4",
+#         "layers":12,
+#         "n_experts":12,
+#         "experts_per_token":1,
+#         "q_head":12,
+#         "dim":4096,
+#         "hdim":4096,
+#         "hdim_moe":128,
+#         "cluster_size":128,
+#         "kv_head":12,
+#         "dhead":64,
+# }
+# Request={"1":{"n_cluster":12,"n_activated_clusters":12,"total_cluster":12*128, "activation_table": Request_SpAt_stat(12, 12*128, 12)},
+#         "2":{"n_cluster":12,"n_activated_clusters":12,"total_cluster":12*128, "activation_table": Request_SpAt_stat(12, 12*128, 12)},
+#         "3":{"n_cluster":12,"n_activated_clusters":12,"total_cluster":12*128, "activation_table": Request_SpAt_stat(12, 12*128, 12)},
+#         "4":{"n_cluster":12,"n_activated_clusters":12,"total_cluster":12*128, "activation_table": Request_SpAt_stat(12, 12*128, 12)},
+#         "5":{"n_cluster":12,"n_activated_clusters":12,"total_cluster":12*128, "activation_table": Request_SpAt_stat(12, 12*128, 12)},
+#         "10":{"n_cluster":12,"n_activated_clusters":12,"total_cluster":12*128, "activation_table": Request_SpAt_stat(12, 12*128, 12)},
+#         "7":{"n_cluster":12,"n_activated_clusters":12,"total_cluster":12*128, "activation_table": Request_SpAt_stat(12, 12*128, 12)}}
+
+# Energy={}
+# Energy["gpu_spat"] = 0
+# Energy["gpu_spat_others"] = 0
+# Energy["gpu_spat_score_context"] = 0
+# Energy["pim_spat"] = 0
+# Energy["pim_spat_score_context"] = 0
+# Energy["comm"] = 0
+# Energy["fc"] = 0
+# Energy["scheduling"] = 0
+# Energy["promotion"] = 0
+# Energy["balance"] = 0
+# Latency={}
+# Latency["gpu_spat"] = 0
+# Latency["gpu_spat_others"] = 0
+# Latency["gpu_spat_score_context"] = 0
+# Latency["pim_spat"] = 0
+# Latency["pim_spat_score_context"] = 0
+# Latency["comm"] = 0
+# Latency["fc"] = 0
+# Latency["scheduling"] = 0
+# Latency["promotion"] = 0
+# Latency["balance"] = 0
+class Request_Stream:
+    def __init__(self, arrival_table):
+        self.request_batch
+
+    def update(self):
+        self.request_batch.update()
+        return self.request_batch
+
+class Request_Batch:
+
+    def __init__(self, activation_ratio, modelinfos):
+        self.n_kv_head = modelinfos["n_kv_head"]
+        self.n_block = modelinfos["n_block"]
+        self.activation_ratio = activation_ratio
+        self.activated_clusters = {}
+        self.request = {}
+
+    def append(self, id, input_cluster, total_cluster):
+        # id as random seed
+        activation_table = Request_SpAt_stat(total_cluster, self.n_block, self.n_kv_head, id)
+        self.request[id] = {"n_cluster": input_cluster, "n_activated_clusters": math.ceil(input_cluster*self.activation_ratio), "total_cluster": total_cluster, "activation_table": activation_table}
+        return self.request
+
+    def update(self):
+        request_to_exit = []
+        for request_id in self.request.keys():
+            self.request[request_id]["n_cluster"] = self.request[request_id]["n_cluster"] + 1
+            self.request[request_id]["n_activated_clusters"] = math.ceil(self.request[request_id]["n_cluster"]*self.activation_ratio)
+        # 请求退出
+        for request_id in self.request.keys():
+            if self.request[request_id]["n_cluster"] >= self.request[request_id]["total_cluster"]:
+                request_to_exit.append(request_id)
+        for request_id in request_to_exit:
+            del self.request[request_id]
+
+        return self.request
+
+    def gen_activated_clusters(self, layer_id, kv_head_id):
+        activated_clusters = {}
+        for request_id in self.request.keys():
+            ## 生成当前cluster的概率表，进行不放回抽样
+            temp_act_table = self.request[request_id]["activation_table"].get_activated_prob(layer_id, kv_head_id, self.request[request_id]["n_cluster"])
+            activated_clusters[request_id] = np.random.choice(self.request[request_id]["n_cluster"], self.request[request_id]["n_activated_clusters"], replace=False, p=temp_act_table)
+        return activated_clusters
+
+class System:
+
+    def __init__(self, energy_stats, latency_stats, modelinfos=None, hardware_config=None,request_batch :Request_Batch=None, request_stream:Request_Stream=None, pim_profile_table:PIM_Profile_Table=None, \
+        hbf_track_table:HBF_Track_Table=None, warmup_iteration=1024, scheduling_interval=64, scheduling_enable=False):
+        self.energy_stats = energy_stats
+        self.latency_stats = latency_stats
+        self.hardware_config = hardware_config
+        self.modelinfos = modelinfos
+        self.request_batch = request_batch
+        self.request_stream = request_stream
+        self.n_block = modelinfos["n_block"]
+        self.device = hardware_config["device"]
+        self.n_device = hardware_config["n_device"]
+        self.parallel_degree = hardware_config["n_device"]
+        self.balance_history = []
+        self.var_history = []
+        self.pim_profile_table = pim_profile_table
+        self.hbf_track_table = hbf_track_table
+        self.warmup_iteration = warmup_iteration
+        self.scheduling_interval = scheduling_interval
+        self.offloading_ratio = 0
+
+    def get_offloading_ratio(self):
+        if self.modelinfos["name"] == "llama4":
+            # model_mem = 2 *self.modelinfos["n_block"] * (
+            #     self.modelinfos["dim"] * (self.modelinfos["n_kv_head"]*2+self.modelinfos["n_q_head"])*self.modelinfos["dhead"] +
+            #     self.modelinfos["dim"] * self.modelinfos["dim"] +
+            #     self.modelinfos["dim"] * self.modelinfos["n_experts"] +
+            #     (self.modelinfos["n_experts"] +1)* self.modelinfos["dim"]*self.modelinfos["hdim_moe"]*3 + 
+            #     self.modelinfos["dim"] * (self.modelinfos["n_kv_head"]*2+self.modelinfos["n_q_head"])*self.modelinfos["dhead"] +
+            #     self.modelinfos["dim"] * self.modelinfos["dim"] +
+            #     self.modelinfos["dim"]*self.modelinfos["hdim"]*3
+            #     )/2
+            model_mem = 2 *402 * 1e9
+        else:
+            model_mem = 2 *self.modelinfos["n_block"] * (
+                self.modelinfos["n_experts"] * self.modelinfos["dim"]*self.modelinfos["hdim_moe"]*3 + 
+                self.modelinfos["dim"] * (self.modelinfos["n_kv_head"]*2+self.modelinfos["n_q_head"])*self.modelinfos["dhead"] +
+                self.modelinfos["dim"] * self.modelinfos["dim"] +
+                (self.modelinfos["n_experts"] +1) * self.modelinfos["dim"]*self.modelinfos["hdim"]*3
+                )/2           
+        kv_cache_mem = 4 * self.modelinfos["n_block"] * self.modelinfos["n_kv_head"] * self.modelinfos["dhead"] * self.modelinfos["cluster_size"] * sum(req["total_cluster"] for req in self.request_batch.request.values())
+        gpu_mem = self.hardware_config["GPU"]["MEM_CAPACITY_PER_DEVICE"] * self.hardware_config["n_device"]
+        if (kv_cache_mem + model_mem) < gpu_mem:
+            self.offloading_ratio = 0
+        else:
+            self.offloading_ratio = (kv_cache_mem-(gpu_mem - model_mem)) / kv_cache_mem
+        print(f"offloading_ratio: {self.offloading_ratio}, kv_cache_mem: {kv_cache_mem/1024/1024/1024}GB, model_mem: {model_mem/1024/1024/1024}GB, gpu_mem: {gpu_mem/1024/1024/1024}GB")
+    def transformer_block_build(self, moe_enable=True):
+        return Transformer(self.device, self.modelinfos, self.request_batch, moe_enable, self.parallel_degree).build()
+
+    def hardware_setup(self):
+        print(f'hardware_setup_start')
+        self.get_offloading_ratio()
+        if self.device == DeviceType.GPU:
+            self.GPU = GPU(DeviceType.GPU, self.hardware_config["GPU"], self.request_batch, self.offloading_ratio)
+            self.PIM = None
+        elif self.device == DeviceType.HB_Sparse_PIM:
+            self.GPU = GPU(DeviceType.GPU, self.hardware_config["GPU"], self.request_batch, self.offloading_ratio)
+            self.PIM = PIM(DeviceType.HB_Sparse_PIM, self.hardware_config["PIM"], self.request_batch)
+        elif self.device == DeviceType.HB_PIM:
+            self.GPU = GPU(DeviceType.GPU, self.hardware_config["GPU"], self.request_batch, self.offloading_ratio)
+            self.PIM = PIM(DeviceType.HB_PIM, self.hardware_config["PIM"], self.request_batch)
+        print(f"hardware_setup_end")
+    def system_setup(self):
+        self.hardware_setup()
+        self.moe_model = self.transformer_block_build(moe_enable=True)
+        self.ffn_model = self.transformer_block_build(moe_enable=False)
+    
+    def sim(self, max_iteration = None, dynamic_enable = False, scheduling_enable = False):
+        if dynamic_enable:
+            self.request_stream.update_arrival_table()
+
+        n_iteration = 0
+        warmup_finish = 0
+        print(f"start simulation")
+        while True:
+            if warmup_finish == 0:
+                print(f"warmup iteration {n_iteration}")
+                if n_iteration >= self.warmup_iteration:
+                    warmup_finish = 1
+                    n_iteration = 0
+                    print(f"warmup finish")
+            else:
+                print(f"iteration {n_iteration}")
+            moe_en = 1
+            layer_wise_sim = 0
+            # layer-wise simulation
+            if layer_wise_sim == 1:
+                # for block_id in range(self.n_block):
+
+                #     if self.modelinfos["name"] == "llama4":
+                #         moe_en = ~moe_en
+
+                #     if moe_en == 0:
+                #         model = self.ffn_model
+                #     else:
+                #         model = self.moe_model
+
+                #     for layer in model:
+                #         if layer.type == "spat":
+                #             if self.device == DeviceType.GPU:
+                #                 energy, latency = self.GPU.execute(layer.get_flops(), layer.get_size())
+                #                 if
+                #                 Energy["gpu_spat"] += energy
+                #                 Latency["gpu_spat"] += latency
+                #             elif self.device == DeviceType.PIM:
+                #                 energy, latency = self.PIM.execute(layer.get_flops(), layer.get_size(),self.request_stream)
+                #                 Energy["pim_spat"] += energy
+                #                 Latency["pim_spat"] += latency
+                #             elif self.device == DeviceType.Sparse_PIM:
+                #                 energy, latency = self.Sparse_PIM.execute(layer.get_flops(), layer.get_size(),self.request_stream)
+                #                 Energy["pim_spat"] += energy
+                #                 Latency["pim_spat"] += latency
+
+                #         elif layer.type == "comm":
+                #             energy, latency = self.GPU.execute(layer.get_flops(), layer.get_size())
+                #             Energy["comm"] += energy
+                #             Latency["comm"] += latency
+                #         else: # FC layer
+                #             energy, latency = self.GPU.execute(layer.get_flops(), layer.get_size())
+                #             Energy["fc"] += energy
+                #             Latency["fc"] += latency
+                #             Energy[layer.name] += energy
+                #             Latency[layer.name] += latency
+                Pass
+            else:
+            ## fast simulation
+                if self.modelinfos["name"] == "llama4":
+                    iteration_energy = 0
+                    iteration_latency = 0
+                    for layer in self.moe_model:
+                        if layer.type == LayerType.SpAt_Score_Context:
+                            if self.device == DeviceType.GPU:
+                                if warmup_finish == 1:
+                                    energy, latency = self.GPU.execute(layer,self.request_batch)
+                                    self.energy_stats["gpu_spat_score_context"] += energy * self.n_block / 2
+                                    self.latency_stats["gpu_spat_score_context"] += latency * self.n_block / 2
+                                    iteration_energy += energy * self.n_block / 2
+                                    iteration_latency += latency * self.n_block / 2
+                            else: # self.device == DeviceType.PIM
+                                energy, latency = self.PIM.execute(layer,self.request_batch, self.pim_profile_table, self.hbf_track_table, self.GPU)
+                                if warmup_finish == 1:
+                                    self.energy_stats["pim_spat_score_context"] += energy * self.n_block / 2
+                                    self.latency_stats["pim_spat_score_context"] += latency * self.n_block / 2
+                                    iteration_energy += energy * self.n_block / 2
+                                    iteration_latency += latency * self.n_block / 2
+                        elif layer.type == LayerType.FC: # FC layer, comm, softmax, similarity
+                            if warmup_finish == 1:
+                                energy, latency = self.GPU.execute(layer)
+                                self.energy_stats["fc"] += energy * self.n_block / 2
+                                self.latency_stats["fc"] += latency * self.n_block / 2
+                                iteration_energy += energy * self.n_block / 2
+                                iteration_latency += latency * self.n_block / 2
+                        elif layer.type in [LayerType.SpAt_Similarity,LayerType.SpAt_Softmax]:
+                            if warmup_finish == 1:
+                                energy, latency = self.GPU.execute(layer)
+                                self.energy_stats["gpu_spat_others"] += energy * self.n_block / 2
+                                self.latency_stats["gpu_spat_others"] += latency * self.n_block / 2
+                                iteration_energy += energy * self.n_block / 2
+                                iteration_latency += latency * self.n_block / 2
+                        elif layer.type in [LayerType.ALL_GATHER, LayerType.ALL_REDUCE]:
+                            if warmup_finish == 1:
+                                energy, latency = self.GPU.execute(layer)
+                                self.energy_stats["comm"] += energy * self.n_block / 2
+                                self.latency_stats["comm"] += latency * self.n_block / 2
+                                iteration_energy += energy * self.n_block / 2
+                                iteration_latency += latency * self.n_block / 2
+                    for layer in self.ffn_model:
+                        if layer.type == LayerType.SpAt_Score_Context:
+                            if self.device == DeviceType.GPU:
+                                if warmup_finish == 1:
+                                    energy, latency = self.GPU.execute(layer,self.request_batch)
+                                    self.energy_stats["gpu_spat_score_context"] += energy * self.n_block / 2
+                                    self.latency_stats["gpu_spat_score_context"] += latency * self.n_block / 2
+                                    iteration_energy += energy * self.n_block / 2
+                                    iteration_latency += latency * self.n_block / 2
+                            else: # self.device == DeviceType.PIM
+                                energy, latency = self.PIM.execute(layer,self.request_batch, self.pim_profile_table, self.hbf_track_table, self.GPU)
+                                if warmup_finish == 1:
+                                    self.energy_stats["pim_spat_score_context"] += energy * self.n_block / 2
+                                    self.latency_stats["pim_spat_score_context"] += latency * self.n_block / 2
+                                    iteration_energy += energy * self.n_block / 2
+                                    iteration_latency += latency * self.n_block / 2
+                        elif layer.type == LayerType.FC: # FC layer, comm, softmax, similarity
+                            if warmup_finish == 1:
+                                energy, latency = self.GPU.execute(layer)
+                                self.energy_stats["fc"] += energy * self.n_block / 2
+                                self.latency_stats["fc"] += latency * self.n_block / 2
+                                iteration_energy += energy * self.n_block / 2
+                                iteration_latency += latency * self.n_block / 2
+                        elif layer.type in [LayerType.SpAt_Similarity,LayerType.SpAt_Softmax]:
+                            if warmup_finish == 1:
+                                energy, latency = self.GPU.execute(layer)
+                                self.energy_stats["gpu_spat_others"] += energy * self.n_block / 2
+                                self.latency_stats["gpu_spat_others"] += latency * self.n_block / 2
+                                iteration_energy += energy * self.n_block / 2
+                                iteration_latency += latency * self.n_block / 2
+                        elif layer.type in [LayerType.ALL_GATHER, LayerType.ALL_REDUCE]:
+                            if warmup_finish == 1:
+                                energy, latency = self.GPU.execute(layer)
+                                self.energy_stats["comm"] += energy * self.n_block / 2
+                                self.latency_stats["comm"] += latency * self.n_block / 2
+                                iteration_energy += energy * self.n_block / 2
+                                iteration_latency += latency * self.n_block / 2
+                else: # qwen-3
+                    for layer in self.moe_model:
+                        if layer.type == LayerType.SpAt_Score_Context:
+                            if self.device == DeviceType.GPU:
+                                if warmup_finish == 1:
+                                    energy, latency = self.GPU.execute(layer,self.request_batch)
+                                    self.energy_stats["gpu_spat_score_context"] += energy * self.n_block
+                                    self.latency_stats["gpu_spat_score_context"] += latency * self.n_block
+                                    iteration_energy += energy * self.n_block
+                                    iteration_latency += latency * self.n_block
+                            else: # self.device == DeviceType.PIM
+                                energy, latency = self.PIM.execute(layer,self.request_batch, self.pim_profile_table, self.hbf_track_table, self.GPU)
+                                if warmup_finish == 1:
+                                    self.energy_stats["pim_spat_score_context"] += energy * self.n_block
+                                    self.latency_stats["pim_spat_score_context"] += latency * self.n_block
+                                    iteration_energy += energy * self.n_block
+                                    iteration_latency += latency * self.n_block
+                        elif layer.type == LayerType.FC: # FC layer, comm, softmax, similarity
+                            if warmup_finish == 1:
+                                energy, latency = self.GPU.execute(layer)
+                                self.energy_stats["fc"] += energy * self.n_block / 2
+                                self.latency_stats["fc"] += latency * self.n_block / 2
+                                iteration_energy += energy * self.n_block / 2
+                                iteration_latency += latency * self.n_block / 2
+                        elif layer.type in [LayerType.SpAt_Similarity,LayerType.SpAt_Softmax]:
+                            if warmup_finish == 1:
+                                energy, latency = self.GPU.execute(layer)
+                                self.energy_stats["gpu_spat_others"] += energy * self.n_block / 2
+                                self.latency_stats["gpu_spat_others"] += latency * self.n_block / 2
+                                iteration_energy += energy * self.n_block / 2
+                                iteration_latency += latency * self.n_block / 2
+                        elif layer.type in [LayerType.ALL_GATHER, LayerType.ALL_REDUCE]:
+                            if warmup_finish == 1:
+                                energy, latency = self.GPU.execute(layer)
+                                self.energy_stats["comm"] += energy * self.n_block / 2
+                                self.latency_stats["comm"] += latency * self.n_block / 2
+                                iteration_energy += energy * self.n_block / 2
+                                iteration_latency += latency * self.n_block / 2
+            n_iteration += 1
+            print(f"iteration {n_iteration}, iteration_energy: {iteration_energy}, iteration_latency: {iteration_latency}")
+            self.request_batch.update()
+            if self.device != DeviceType.GPU:
+                average_utilization, _, total_variance = self.pim_profile_table._get_balance_meta()
+                self.var_history.append((average_utilization, total_variance, 0)) # 0: no scheduling, 1: scheduling
+                _,n_promotions = promotion(self.hbf_track_table, self.pim_profile_table, 4096)
+                print(f"request_batch: {len(self.request_batch.request)}, average_utilization: {average_utilization}, total_variance: {total_variance}")
+                self.energy_stats["scheduling"] += 2 * n_promotions * (2*2*128*16) * (self.GPU.energy_table['hbm'] + self.GPU.energy_table['hbm']) * self.n_device
+                self.latency_stats["scheduling"] +=  n_promotions * (2*2*128*16) / self.GPU.hbf_memory_bandwidth + n_promotions * (2*2*128*16) / self.GPU.hbm_memory_bandwidth
+
+
+                if scheduling_enable and self.device == DeviceType.HB_Sparse_PIM:
+                    n_swaps = 0
+                    for error_threshold in [0.4, 0.2, 0.1, 0.05]:
+                        initial_variance, final_variance, balance_history, swaps = self.pim_profile_table.greedy_balance_load(error_threshold)
+                        n_swaps += swaps
+                        self.balance_history.append([balance_history, error_threshold])
+                    self.var_history.append((average_utilization, total_variance, 1))
+                    if warmup_finish == 1:
+                        # TODO: more accurate energy and latency calculation
+                        self.energy_stats["balance"] += 2 * n_swaps * (2*4*1024*8) * (self.GPU.energy_table['hbm'] + self.GPU.energy_table['hbm']) * self.n_device
+                        self.latency_stats["balance"] += 2 * 2 * n_swaps * (2*4*1024*8) / self.GPU.hbm_memory_bandwidth
+            
+
+            # dynamic arrival request
+            if dynamic_enable:
+                arrival_request = self.request_stream.get_arrival_request()
+                for request in arrival_request:
+                    self.request_batch.append(request["id"], request["input_cluster"], request["total_cluster"])
+                self.update_offloading_ratio()
+
+
+            if len(self.request_batch.request) == 0:
+                return self.energy_stats.copy(), self.latency_stats.copy()
+
+            if max_iteration is not None and n_iteration >= max_iteration:
+                return self.energy_stats.copy(), self.latency_stats.copy()
