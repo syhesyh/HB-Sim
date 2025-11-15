@@ -226,6 +226,7 @@ class Transformer:
         self.dhead = modelinfos['dhead']
         self.dim = modelinfos['dim']
         self.hdim = modelinfos['hdim']
+        self.moe_dim = modelinfos['moe_dim']
         self.hdim_moe = modelinfos['hdim_moe']
         self.cluster_size = modelinfos['cluster_size']
         self.request_batch = request_batch
@@ -269,11 +270,11 @@ class Transformer:
             print(f"moe_activation_stat: {len(moe_activation_stat)}")
             for expert_id, token_count in moe_activation_stat.items():
                 if token_count > 0:
-                    decoder_blocks.append(FC_Layer('decoder', 'moe', LayerType.FC, "tensor_col", self.tensor_parallel, token_count, self.dim, self.hdim_moe))
+                    decoder_blocks.append(FC_Layer('decoder', 'moe', LayerType.FC, "tensor_col", self.tensor_parallel, token_count, self.moe_dim, self.hdim_moe))
                     decoder_blocks.append(FC_Layer('decoder', 'moe', LayerType.ACT, "tensor_col", self.tensor_parallel, token_count, self.hdim_moe, 1))
-                    decoder_blocks.append(FC_Layer('decoder', 'moe', LayerType.FC, "tensor_col", self.tensor_parallel, token_count, self.dim, self.hdim_moe))
+                    decoder_blocks.append(FC_Layer('decoder', 'moe', LayerType.FC, "tensor_col", self.tensor_parallel, token_count, self.moe_dim, self.hdim_moe))
                     decoder_blocks.append(FC_Layer('decoder', 'moe', LayerType.MATMUL, "tensor_col", self.tensor_parallel, token_count, self.hdim_moe, 1))
-                    decoder_blocks.append(FC_Layer('decoder', 'moe', LayerType.FC, "tensor_row", self.tensor_parallel, token_count, self.hdim_moe, self.dim))
+                    decoder_blocks.append(FC_Layer('decoder', 'moe', LayerType.FC, "tensor_row", self.tensor_parallel, token_count, self.hdim_moe, self.moe_dim))
         else:
             decoder_blocks.append(FC_Layer('decoder', 'ffn', LayerType.FC, "tensor_col", 1, batch, self.dim, self.n_experts))
             decoder_blocks.append(FC_Layer('decoder', 'ffn', LayerType.ACT, "tensor_col", self.tensor_parallel, batch, self.hdim_moe, 1))

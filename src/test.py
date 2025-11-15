@@ -25,6 +25,7 @@ Model = {
     "n_q_head":40,
     "dim":5120,
     "hdim":16384,
+    "moe_dim":5120,
     "hdim_moe":8192,
     "cluster_size":16,
     "n_kv_head":8,
@@ -40,22 +41,24 @@ Hardware_config_GPU = {
 }
 
 Hardware_config_PIM = {
-    "device": DeviceType.HB_PIM,
+    "device": DeviceType.HB_Sparse_PIM,
     "n_device": 8,
     "GPU": make_gpu_config(8, hbf_en=True),
-    "PIM": make_pim_config(num_pim_device=8, num_pim_stack=4, sparse_enable=True),
+    "PIM": make_pim_config(num_pim_device=8, num_pim_stack=4, sparse_enable=False),
 }
 
-Host_request_batch = infra.Request_Batch(0.10, Model)
-for i in range(64):
-    Host_request_batch.append(i, 8192+256, 8192+256+4)
-Host_pim_profile_table = None
-Host_hbf_track_table = None
 
-# request_batch.gen_activated_clusters(0, 0)
-# print(f"request_batch.activated_clusters: {request_batch.activated_clusters}")
-gpu_energy_stats = energy_stats()
-gpu_latency_stats = latency_stats()
+
+# Host_request_batch = infra.Request_Batch(0.10, Model)
+# for i in range(64):
+#     Host_request_batch.append(i, 8192+256, 8192+256+4)
+# Host_pim_profile_table = None
+# Host_hbf_track_table = None
+
+# # request_batch.gen_activated_clusters(0, 0)
+# # print(f"request_batch.activated_clusters: {request_batch.activated_clusters}")
+# gpu_energy_stats = energy_stats()
+# gpu_latency_stats = latency_stats()
 
 
 # gpu_system = infra.System(gpu_energy_stats, gpu_latency_stats, Model, Hardware_config_GPU, request_batch=Host_request_batch, request_stream=None, pim_profile_table=Host_pim_profile_table, \
@@ -72,7 +75,7 @@ gpu_latency_stats = latency_stats()
 
 
 
-PIM_request_batch = infra.Request_Batch(0.05, Model)
+PIM_request_batch = infra.Request_Batch(0.10, Model)
 for i in range(64):
     PIM_request_batch.append(i, 8192+256, 8192+256+32+4)
 PIM_pim_profile_table = PIM_Profile_Table(Hardware_config_PIM["PIM"])

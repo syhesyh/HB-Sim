@@ -211,29 +211,74 @@ def make_pim_config(
 #     return config
 
 
-def make_model_config(name, dtype):
-    model_table = {}
-    model_table['GPT-175B'] = [96, 12288, 96, 128, 4, 1]
-    model_table['GPT-89B'] = [48, 12288, 96, 128, 4, 1]
-    model_table['GPT-13B'] = [40, 5120, 40, 128, 4, 1]
-    model_table['LLAMA-7B'] = [32, 4096, 32, 128, 8 / 3, 1]
-    model_table['LLAMA-65B'] = [80, 8192, 64, 128, 8 / 3, 1]
-    model_table['MT-76B'] = [60, 10240, 40, 128, 4, 1]
-    model_table['MT-146B'] = [80, 12288, 80, 128, 4, 1]
-    model_table['MT-310B'] = [96, 16384, 128, 128, 4, 1]
-    model_table['MT-530B'] = [105, 20480, 128, 160, 4, 1]
-    model_table['MT-1008B'] = [128, 25600, 160, 160, 4, 1]
-    model_table['OPT-66B'] = [64, 9216, 72, 128, 4, 1]
+# def make_model_config(name, dtype):
+#     model_table = {}
+#     model_table['GPT-175B'] = [96, 12288, 96, 128, 4, 1]
+#     model_table['GPT-89B'] = [48, 12288, 96, 128, 4, 1]
+#     model_table['GPT-13B'] = [40, 5120, 40, 128, 4, 1]
+#     model_table['LLAMA-7B'] = [32, 4096, 32, 128, 8 / 3, 1]
+#     model_table['LLAMA-65B'] = [80, 8192, 64, 128, 8 / 3, 1]
+#     model_table['MT-76B'] = [60, 10240, 40, 128, 4, 1]
+#     model_table['MT-146B'] = [80, 12288, 80, 128, 4, 1]
+#     model_table['MT-310B'] = [96, 16384, 128, 128, 4, 1]
+#     model_table['MT-530B'] = [105, 20480, 128, 160, 4, 1]
+#     model_table['MT-1008B'] = [128, 25600, 160, 160, 4, 1]
+#     model_table['OPT-66B'] = [64, 9216, 72, 128, 4, 1]
 
-    ndec, hdim, nheads, dhead, ff_scale, gqa_size = model_table[name]
-    config = {
-        'name': name,
-        'ndec': ndec,
-        'hdim': hdim,
-        'num_heads': nheads,
-        'dhead': dhead,
-        'ff_scale': ff_scale,
-        'gqa_size': gqa_size,
-        'dtype': dtype
-    }
+#     ndec, hdim, nheads, dhead, ff_scale, gqa_size = model_table[name]
+#     config = {
+#         'name': name,
+#         'ndec': ndec,
+#         'hdim': hdim,
+#         'num_heads': nheads,
+#         'dhead': dhead,
+#         'ff_scale': ff_scale,
+#         'gqa_size': gqa_size,
+#         'dtype': dtype
+#     }
+#     return config
+Model = {
+    "name":"llama4",
+    "n_block":48,
+    "n_experts":128,
+    "experts_per_token":2,
+    "n_q_head":40,
+    "dim":5120,
+    "hdim":16384,
+    "hdim_moe":8192,
+    "cluster_size":16,
+    "n_kv_head":8,
+    "dhead":128,
+}
+
+def make_model_config(name, model_name):
+    config = {}
+    if model_name == 'llama4':
+        config['name'] = 'llama4'
+        config['n_block'] = 48
+        config['n_experts'] = 128
+        config['experts_per_token'] = 2
+        config['n_q_head'] = 40
+        config['dim'] = 5120
+        config['moe_dim'] = 5120
+        config['hdim'] = 16384
+        config['hdim_moe'] = 8192
+        config['cluster_size'] = 16
+        config['n_kv_head'] = 8
+        config['dhead'] = 128
+    else:
+        config['name'] = 'qwen3'
+        config['n_block'] = 62
+        config['n_experts'] = 160
+        config['experts_per_token'] = 8
+        config['n_q_head'] = 96
+        config['dim'] = 6144
+        config['hdim'] = 6144
+        config['dim_moe'] = 2560
+        config['hdim_moe'] = 6144
+        config['cluster_size'] = 16
+        config['n_kv_head'] = 8
+        config['dhead'] = 128        
+        
     return config
+    
