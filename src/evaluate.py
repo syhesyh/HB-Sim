@@ -8,49 +8,6 @@ import random
 import numpy as np
 import math
 from collections import defaultdict
-class GPU:
-    def __init__(self):
-        self.energy = 0
-        self.latency = 0
-
-    def execute(self, flops, size):
-        self.energy += 1
-        self.latency += 1
-        return self.energy, self.latency
-
-class COMM:
-    def __init__(self):
-        self.energy = 0
-        self.latency = 0
-
-    def execute(self, flops, size):
-        self.energy += 1
-        self.latency += 1
-        return self.energy, self.latency
-
-class Sparse_PIM:
-    def __init__(self):
-        self.energy = 0
-        self.latency = 0
-
-    def execute(self, flops, size):
-        self.energy += 1
-        self.latency += 1
-        return self.energy, self.latency
-
-class PIM:
-    def __init__(self):
-        self.energy = 0
-        self.latency = 0
-
-    def execute(self, flops, size):
-        self.energy += 1
-        self.latency += 1
-        return self.energy, self.latency
-
-
-
-
 
 class GPU:
 
@@ -156,7 +113,9 @@ class GPU:
 
                 # 判断是否需要CPU-Offloading
                 if self.offloading_ratio > 0:
-                    clusters_in_cpu = (req_kv_head_activated_clusters > (request_info["total_cluster"] * self.offloading_ratio) ).sum()
+                    clusters_in_cpu = 0
+                    for request_id, clusters in req_kv_head_activated_clusters.items():
+                        clusters_in_cpu += (clusters> (request_info["total_cluster"] * self.offloading_ratio) ).sum()
                     #print(f"clusters_in_cpu: {clusters_in_cpu}")
                     cpu_latency = clusters_in_cpu * layer.cluster_size * layer.head_dim / self.cpu_comm_bandwidth
                     cpu_energy = clusters_in_cpu * layer.cluster_size * layer.head_dim * (self.energy_table['comm'] + self.energy_table['dimm'] + self.energy_table['hbm'])
@@ -175,7 +134,7 @@ class GPU:
                 energy += (compute_energy + cpu_energy) * self.num_gpu
                 mem_energy += gpu_mem_energy * self.num_gpu
                 compute_energy += (gpu_alu_energy + gpu_onchip_mem_energy) * self.num_gpu
-                print(f"layer.name: {layer.name}, layer.type: {layer.type}, energy: {energy}, execute_time: {execute_time}")
+            #print(f"layer.name: {layer.name}, layer.type: {layer.type}, energy: {energy}, execute_time: {execute_time}")
         elif layer.type == LayerType.SpAt_Softmax:
 
             for request_id in layer.request_batch.request.keys():
@@ -238,6 +197,7 @@ class PIM:
             # # for kv_head_id, request_clusters in activated_clusters_table.items():
             # #     if kv_head_id < (8//self.num_pim_device):
             # #         continue #只统计一半的设备
+            
             for request_id, clusters in activated_clusters_table.items():
                 for cluster_id in clusters:
                     # default kv_head_id is 0

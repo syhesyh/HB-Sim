@@ -7,58 +7,6 @@ import random
 import numpy as np
 from scipy.stats import zipf
 import math
-class Request_SpAt_stat():
-
-    def __init__(self, total_cluster, n_block, n_kv_head, seed=321, prob_func="zipf"):
-        self.alpha = 1.0
-        self.s = 1.1
-        self.n_kv_head = n_kv_head
-        self.total_cluster = total_cluster
-        self.n_block = n_block
-        self.activated_prob_table=[[[0 for _ in range(total_cluster)] for _ in range(n_kv_head)] for _ in range(n_block)]
-        np.random.seed(seed)
-        
-        for block in range(n_block):
-            for kv_head in range(1):
-                seed = seed + 1
-                if prob_func == "power_law":
-                    # 生成幂律分布的概率
-                    indices = np.arange(1, total_cluster + 1)
-                    prob = indices ** (-self.alpha)
-                    prob = prob / prob.sum()  # 归一化
-                    # 随机打乱顺序，实现随机分配
-                    prob = np.random.permutation(prob)
-                    self.activated_prob_table[block][kv_head] = prob
-                    
-                elif prob_func == "zipf":
-                    # 生成Zipf分布的概率
-                    x = np.arange(1, total_cluster + 1)
-                    prob = zipf.pmf(x, self.s)
-                    prob = prob / prob.sum()  # 归一化
-                    # 随机打乱顺序，实现随机分配
-                    prob = np.random.permutation(prob)
-                    self.activated_prob_table[block][kv_head] = prob
-                    
-                elif prob_func == "random":
-                    # 完全随机分配：生成n_cluster个随机数，然后归一化
-                    prob = np.random.rand(total_cluster)
-                    prob = prob / prob.sum()  # 归一化
-                    self.activated_prob_table[block][kv_head] = prob
-                    
-                elif prob_func == "uniform":
-                    # 均匀分布：每个cluster概率相等
-                    prob = np.ones(total_cluster) / total_cluster
-                    # 随机打乱顺序（虽然概率相同，但可以随机分配位置）
-                    prob = np.random.permutation(prob)
-                    self.activated_prob_table[block][kv_head] = prob
-                else:
-                    raise ValueError(f"Invalid probability function: {prob_func}")
-        
-    def get_activated_prob(self, block, kv_head, n_clusters):
-        # 已存在的cluster归一化
-        return self.activated_prob_table[block][kv_head][:n_clusters]/self.activated_prob_table[block][kv_head][:n_clusters].sum()
-
-
 
 
 class PIM_Profile_Table():

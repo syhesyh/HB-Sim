@@ -41,56 +41,83 @@ Hardware_config_GPU = {
 }
 
 Hardware_config_PIM = {
-    "device": DeviceType.HB_Sparse_PIM,
+    "device": DeviceType.HB_PIM,
     "n_device": 8,
     "GPU": make_gpu_config(8, hbf_en=True),
     "PIM": make_pim_config(num_pim_device=8, num_pim_stack=4, sparse_enable=False),
 }
 
 
-
-# Host_request_batch = infra.Request_Batch(0.10, Model)
-# for i in range(64):
-#     Host_request_batch.append(i, 8192+256, 8192+256+4)
-# Host_pim_profile_table = None
-# Host_hbf_track_table = None
-
-# # request_batch.gen_activated_clusters(0, 0)
-# # print(f"request_batch.activated_clusters: {request_batch.activated_clusters}")
-# gpu_energy_stats = energy_stats()
-# gpu_latency_stats = latency_stats()
+Hardware_config_Sparse_PIM = {
+    "device": DeviceType.HB_PIM,
+    "n_device": 8,
+    "GPU": make_gpu_config(8, hbf_en=True),
+    "PIM": make_pim_config(num_pim_device=8, num_pim_stack=4, sparse_enable=True),
+}
 
 
-# gpu_system = infra.System(gpu_energy_stats, gpu_latency_stats, Model, Hardware_config_GPU, request_batch=Host_request_batch, request_stream=None, pim_profile_table=Host_pim_profile_table, \
-#     hbf_track_table=Host_hbf_track_table, warmup_iteration=0, scheduling_interval=4, scheduling_enable=False)
-# gpu_system.system_setup()
-# gpu_system.sim()
-# print(f"gpu_energy: {gpu_system.energy_stats}")
-# print(f"-----------------------------")
-# print(f"gpu_latency: {gpu_system.latency_stats}")
-# print(f"-----------------------------")
+Host_request_batch = infra.Request_Batch(0.10, Model)
+for i in range(64):
+    Host_request_batch.append(i, 8192+256+256, 8192+256+256+4)
+Host_pim_profile_table = None
+Host_hbf_track_table = None
 
-# print(f"gpu_energy: {gpu_system.energy_stats['sum']}, gpu_latency: {gpu_system.latency_stats['sum']}")
+# request_batch.gen_activated_clusters(0, 0)
+# print(f"request_batch.activated_clusters: {request_batch.activated_clusters}")
+gpu_energy_stats = energy_stats()
+gpu_latency_stats = latency_stats()
+
+
+gpu_system = infra.System(gpu_energy_stats, gpu_latency_stats, Model, Hardware_config_GPU, request_batch=Host_request_batch, request_stream=None, pim_profile_table=Host_pim_profile_table, \
+    hbf_track_table=Host_hbf_track_table, warmup_iteration=0, scheduling_interval=4, scheduling_enable=False)
+gpu_system.system_setup()
+gpu_system.sim()
+print(f"gpu_energy: {gpu_system.energy_stats}")
+print(f"-----------------------------")
+print(f"gpu_latency: {gpu_system.latency_stats}")
+print(f"-----------------------------")
+
+print(f"gpu_energy: {gpu_system.energy_stats['sum']}, gpu_latency: {gpu_system.latency_stats['sum']}")
 
 
 
 
 PIM_request_batch = infra.Request_Batch(0.10, Model)
 for i in range(64):
-    PIM_request_batch.append(i, 8192+256, 8192+256+32+4)
+    PIM_request_batch.append(i, 8192+256, 8192+256+256+4)
 PIM_pim_profile_table = PIM_Profile_Table(Hardware_config_PIM["PIM"])
 PIM_pim_profile_table.build_profile_table()
 PIM_hbf_track_table = HBF_Track_Table(64*64)
 pim_energy_stats = energy_stats()
 pim_latency_stats = latency_stats()
 pim_system = infra.System(pim_energy_stats, pim_latency_stats, Model, Hardware_config_PIM, request_batch=PIM_request_batch, request_stream=None, pim_profile_table=PIM_pim_profile_table, \
-        hbf_track_table=PIM_hbf_track_table, warmup_iteration=32, scheduling_interval=4)
+        hbf_track_table=PIM_hbf_track_table, warmup_iteration=256, scheduling_interval=4)
 pim_system.system_setup()
 pim_system.sim(scheduling_enable=True)
 
-print(f"gpu_energy: {pim_system.energy_stats}")
+print(f"pim_energy: {pim_system.energy_stats}")
 print(f"-----------------------------")
-print(f"gpu_latency: {pim_system.latency_stats}")
+print(f"pim_latency: {pim_system.latency_stats}")
 print(f"-----------------------------")
 
-print(f"gpu_energy: {pim_system.energy_stats['sum']}, gpu_latency: {pim_system.latency_stats['sum']}")
+print(f"pim_energy: {pim_system.energy_stats['sum']}, pim_latency: {pim_system.latency_stats['sum']}")
+
+Sparse_PIM_request_batch = infra.Request_Batch(0.10, Model)
+for i in range(64):
+    Sparse_PIM_request_batch.append(i, 8192+256, 8192+256+256+4)
+Sparse_PIM_pim_profile_table = PIM_Profile_Table(Hardware_config_Sparse_PIM["PIM"])
+Sparse_PIM_pim_profile_table.build_profile_table()
+Sparse_PIM_hbf_track_table = HBF_Track_Table(64*64)
+Sparse_PIM_energy_stats = energy_stats()
+Sparse_PIM_latency_stats = latency_stats()
+Sparse_PIM_system = infra.System(Sparse_PIM_energy_stats, Sparse_PIM_latency_stats, Model, Hardware_config_Sparse_PIM, request_batch=Sparse_PIM_request_batch, request_stream=None, pim_profile_table=Sparse_PIM_pim_profile_table, \
+        hbf_track_table=Sparse_PIM_hbf_track_table, warmup_iteration=256, scheduling_interval=4)
+Sparse_PIM_system.system_setup()
+Sparse_PIM_system.sim(scheduling_enable=True)
+
+print(f"Sparse_PIM_energy: {Sparse_PIM_system.energy_stats}")
+print(f"-----------------------------")
+print(f"Sparse_PIM_latency: {Sparse_PIM_system.latency_stats}")
+print(f"-----------------------------")
+
+print(f"Sparse_PIM_energy: {Sparse_PIM_system.energy_stats['sum']}, Sparse_PIM_latency: {Sparse_PIM_system.latency_stats['sum']}")

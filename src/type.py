@@ -28,7 +28,6 @@ class DeviceType(Enum):
     NONE = 0
     GPU = 1
     CPU = 2
-    HB_Sparse_PIM = 3
     HB_PIM = 4
 
 

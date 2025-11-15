@@ -39,3 +39,7 @@ def latency_stats():
         "sum":0,
     }
     return latency_stats
+
+def tbt_stats():
+    tbt = []
+    return tbt

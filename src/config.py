@@ -83,7 +83,7 @@ def make_gpu_config(
     config["FLOPS_PER_DEVICE"] = 4.5*1000*1000 *1000 *1000* 1000 #4500TFLOPS
     config['MEM_CAPACITY_PER_DEVICE'] = 2048 *1024 * 1024 * 1024 if hbf_en else 180 *1024 *1024*1024
     config['GPU_COMM_BANDWIDTH'] = 900 * 1024 *1024 * 1024
-    config['CPU_COMM_BANDWIDTH'] = 25 * 1024 *1024 * 1024
+    config['CPU_COMM_BANDWIDTH'] = 50 * 1024 *1024 * 1024
     config['GPU_HBF_BANDWIDTH'] =  4 * 1.6 * 1024 * 1024 *1024 * 1024
     config['GPU_HBM_BANDWIDTH'] = 4 * 1024 * 1024 * 1024 * 1024 if hbf_en else 8 * 1024 * 1024 * 1024 * 1024
     config['ENERGY_TABLE'] = ENERGY_TABLE['GPU']
@@ -251,7 +251,7 @@ Model = {
     "dhead":128,
 }
 
-def make_model_config(name, model_name):
+def make_model_config(model_name):
     config = {}
     if model_name == 'llama4':
         config['name'] = 'llama4'
@@ -274,7 +274,7 @@ def make_model_config(name, model_name):
         config['n_q_head'] = 96
         config['dim'] = 6144
         config['hdim'] = 6144
-        config['dim_moe'] = 2560
+        config['moe_dim'] = 2560
         config['hdim_moe'] = 6144
         config['cluster_size'] = 16
         config['n_kv_head'] = 8

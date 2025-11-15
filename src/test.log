@@ -1,0 +1,109 @@
+hardware_setup_start
+offloading_ratio: 0, kv_cache_mem: 1632.75GB, model_mem: 748.7833499908447GB, gpu_mem: 1440.0GB
+hardware_setup_end
+moe_activation_stat: 30
+start simulation
+layer.name: spat_score_context, layer.type: LayerType.SpAt_Score_Context, energy: 0.08885509963775996, execute_time: 0.0001785087999999999
+layer.name: spat_score_context, layer.type: LayerType.SpAt_Score_Context, energy: 0.08885509963775996, execute_time: 0.0001785087999999999
+iteration 1, iteration_energy: 17.043760184033292, iteration_mem_energy: 11.1325434032947, iteration_latency: 0.012610181200546324
+layer.name: spat_score_context, layer.type: LayerType.SpAt_Score_Context, energy: 0.08885509963775996, execute_time: 0.0001785087999999999
+layer.name: spat_score_context, layer.type: LayerType.SpAt_Score_Context, energy: 0.08885509963775996, execute_time: 0.0001785087999999999
+iteration 2, iteration_energy: 17.044066125250573, iteration_mem_energy: 11.132746318479338, iteration_latency: 0.012610270607513487
+layer.name: spat_score_context, layer.type: LayerType.SpAt_Score_Context, energy: 0.08885509963775996, execute_time: 0.0001785087999999999
+layer.name: spat_score_context, layer.type: LayerType.SpAt_Score_Context, energy: 0.08885509963775996, execute_time: 0.0001785087999999999
+iteration 3, iteration_energy: 17.04437206646785, iteration_mem_energy: 11.132949233663979, iteration_latency: 0.01261036001448065
+layer.name: spat_score_context, layer.type: LayerType.SpAt_Score_Context, energy: 0.08885509963775996, execute_time: 0.0001785087999999999
+layer.name: spat_score_context, layer.type: LayerType.SpAt_Score_Context, energy: 0.08885509963775996, execute_time: 0.0001785087999999999
+iteration 4, iteration_energy: 17.04467800768514, iteration_mem_energy: 11.13315214884862, iteration_latency: 0.012610449421447813
+gpu_energy: {'qkv': 0.86366666883072, 'spat_score_context': 17.060179130449914, 'spat_similarity': 10.659276982517753, 'spat_softmax': 1.2666692173823988, 'proj': 0.6185595961343999, 'comm': 1.233830019072, 'norm': 0.18614656696319992, 'moe': 34.21361179459609, 'ffn': 2.0749364074905596, 'scheduling': 0, 'promotion': 0, 'balance': 0, 'sum': 68.17687638343703, 'mem_energy': 44.53139110428671, 'compute_energy': 18.023601745489835}
+-----------------------------
+gpu_latency: {'qkv': 0.0002002716064453125, 'spat_score_context': 0.03427368959999998, 'spat_similarity': 0.0031133294105529785, 'spat_softmax': 9.734183549880981e-05, 'proj': 0.0001430511474609375, 'comm': 0.001822916666666667, 'norm': 1.1175870895385742e-06, 'moe': 0.01031734049320221, 'ffn': 0.0004722028970718384, 'scheduling': 0, 'promotion': 0, 'balance': 0, 'sum': 0.05044126124398828}
+-----------------------------
+gpu_energy: 68.17687638343703, gpu_latency: 0.05044126124398828
+hardware_setup_start
+offloading_ratio: 0, kv_cache_mem: 1632.75GB, model_mem: 748.7833499908447GB, gpu_mem: 16384.0GB
+hardware_setup_end
+moe_activation_stat: 30
+start simulation
+warmup iteration 0
+warmup iteration 0, hit_clusters_counts: 0, miss_clusters_counts: 54080, hit_ratio: 0.0
+n_promotions: 4096
+request_batch: 64, average_utilization: 0.0, total_variance: 0.0
+n_swaps: 0, variance: 0.4911323014219285, final_variance: 0.4911323014219285
+warmup iteration 1
+warmup iteration 1, hit_clusters_counts: 1444, miss_clusters_counts: 52636, hit_ratio: 0.02670118343195266
+n_promotions: 4096
+request_batch: 64, average_utilization: 27.111328125, total_variance: 0.8299264567321519
+warmup iteration 2
+warmup iteration 2, hit_clusters_counts: 2468, miss_clusters_counts: 51612, hit_ratio: 0.04563609467455621
+n_promotions: 4096
+request_batch: 64, average_utilization: 54.017578125, total_variance: 1.1403825057942114
+warmup iteration 3
+warmup iteration 3, hit_clusters_counts: 3370, miss_clusters_counts: 50710, hit_ratio: 0.06231508875739645
+n_promotions: 4096
+request_batch: 64, average_utilization: 80.8642578125, total_variance: 1.6589399841563632
+warmup iteration 4
+warmup iteration 4, hit_clusters_counts: 4119, miss_clusters_counts: 49961, hit_ratio: 0.07616494082840236
+n_promotions: 4096
+request_batch: 64, average_utilization: 107.63623046875, total_variance: 2.088378335427792
+n_swaps: 0, variance: 1.7435707793204152, final_variance: 1.7435707793204152
+warmup iteration 5
+warmup iteration 5, hit_clusters_counts: 4837, miss_clusters_counts: 49243, hit_ratio: 0.08944156804733727
+n_promotions: 4096
+request_batch: 64, average_utilization: 134.39306640625, total_variance: 2.5853196526788924
+warmup iteration 6
+warmup iteration 6, hit_clusters_counts: 5441, miss_clusters_counts: 48639, hit_ratio: 0.10061020710059172
+n_promotions: 4096
+request_batch: 64, average_utilization: 161.09423828125, total_variance: 3.2928968899127478
+warmup iteration 7
+warmup iteration 7, hit_clusters_counts: 6035, miss_clusters_counts: 48045, hit_ratio: 0.1115939349112426
+n_promotions: 4096
+request_batch: 64, average_utilization: 187.79052734375, total_variance: 3.8284206665456146
+warmup iteration 8
+warmup iteration 8, hit_clusters_counts: 6683, miss_clusters_counts: 47397, hit_ratio: 0.12357618343195266
+n_promotions: 4096
+request_batch: 64, average_utilization: 214.51318359375, total_variance: 4.399354314027893
+n_swaps: 0, variance: 4.19460684242278, final_variance: 4.19460684242278
+warmup iteration 9
+warmup iteration 9, hit_clusters_counts: 7233, miss_clusters_counts: 46847, hit_ratio: 0.13374630177514793
+n_promotions: 4096
+request_batch: 64, average_utilization: 241.18798828125, total_variance: 5.118165436693373
+warmup iteration 10
+warmup iteration 10, hit_clusters_counts: 7857, miss_clusters_counts: 46223, hit_ratio: 0.14528476331360946
+n_promotions: 4096
+request_batch: 64, average_utilization: 267.89892578125, total_variance: 5.775338093657727
+warmup iteration 11
+warmup iteration 11, hit_clusters_counts: 8330, miss_clusters_counts: 45750, hit_ratio: 0.15403106508875739
+n_promotions: 4096
+request_batch: 64, average_utilization: 294.5361328125, total_variance: 6.361172433786153
+warmup iteration 12
+warmup iteration 12, hit_clusters_counts: 8792, miss_clusters_counts: 45288, hit_ratio: 0.16257396449704142
+n_promotions: 4096
+request_batch: 64, average_utilization: 321.16796875, total_variance: 7.012552178880628
+n_swaps: 0, variance: 6.836468729358747, final_variance: 6.836468729358747
+warmup iteration 13
+warmup iteration 13, hit_clusters_counts: 9319, miss_clusters_counts: 44761, hit_ratio: 0.17231878698224853
+n_promotions: 4096
+request_batch: 64, average_utilization: 347.83154296875, total_variance: 7.807275825944184
+warmup iteration 14
+warmup iteration 14, hit_clusters_counts: 9817, miss_clusters_counts: 44263, hit_ratio: 0.18152736686390533
+n_promotions: 4096
+request_batch: 64, average_utilization: 374.48095703125, total_variance: 8.634937021504047
+warmup iteration 15
+warmup iteration 15, hit_clusters_counts: 10325, miss_clusters_counts: 43755, hit_ratio: 0.1909208579881657
+n_promotions: 4096
+request_batch: 64, average_utilization: 401.13525390625, total_variance: 9.375300377166276
+warmup iteration 16
+warmup iteration 16, hit_clusters_counts: 10845, miss_clusters_counts: 43235, hit_ratio: 0.2005362426035503
+n_promotions: 4096
+request_batch: 64, average_utilization: 427.79541015625, total_variance: 10.123101598057008
+n_swaps: 0, variance: 9.946733132038881, final_variance: 9.946733132038881
+warmup iteration 17
+warmup iteration 17, hit_clusters_counts: 11297, miss_clusters_counts: 42783, hit_ratio: 0.20889423076923078
+n_promotions: 4096
+request_batch: 64, average_utilization: 454.42236328125, total_variance: 11.0161381919846
+warmup iteration 18
+warmup iteration 18, hit_clusters_counts: 11823, miss_clusters_counts: 42257, hit_ratio: 0.21862056213017753
+n_promotions: 4096
+request_batch: 64, average_utilization: 481.08544921875, total_variance: 11.892052854207511
+warmup iteration 19
