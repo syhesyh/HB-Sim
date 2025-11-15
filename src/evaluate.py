@@ -148,6 +148,8 @@ class GPU:
                 operation_intensity = m
                 flops = layer.get_flops()
                 in1, in2, out = layer.get_size()
+                total_activated_clusters = in2 / layer.cluster_size
+                hbm_miss_clusters_counts = 0
                 req_kv_head_activated_clusters = activated_clusters_table
                 #print(f"request_info: {req_kv_head_activated_clusters}")
                 #print(f"layer.request_id: {layer.request_id}, kv_head_id: {kv_head_id}, req_kv_head_activated_clusters: {req_kv_head_activated_clusters}")
@@ -158,20 +160,22 @@ class GPU:
                     #print(f"clusters_in_cpu: {clusters_in_cpu}")
                     cpu_latency = clusters_in_cpu * layer.cluster_size * layer.head_dim / self.cpu_comm_bandwidth
                     cpu_energy = clusters_in_cpu * layer.cluster_size * layer.head_dim * (self.energy_table['comm'] + self.energy_table['dimm'] + self.energy_table['hbm'])
+                    hbm_miss_clusters_counts +=1
                 else:
                     cpu_latency = 0
                     cpu_energy = 0
-
+                gpu_hit_clusters_counts = total_activated_clusters - hbm_miss_clusters_counts
                 gpu_mem_energy = ((in1+out)*self.energy_table['hbm'] + in2*self.energy_table['hbf']) if self.hbf_en else ((in1+in2+out)*self.energy_table['hbm'])
                 gpu_alu_energy = flops/2*self.energy_table['alu']
                 gpu_onchip_mem_energy = (in1+in2+out)*(self.energy_table['reg'] + self.energy_table['l1'] + self.energy_table['l2']) *4 # 4: 4 is scaling factor
                 compute_energy = gpu_mem_energy + gpu_alu_energy + gpu_onchip_mem_energy
-                compute_latency = flops/min(operation_intensity*self.peak_memory_bandwidth, self.peak_flops)
+                #compute_latency = flops/min(operation_intensity*self.peak_memory_bandwidth, self.peak_flops)
+                compute_latency = (math.ceil(gpu_hit_clusters_counts/8/32)*4*0.8+2.5*0.8)*1e-9 + hbm_miss_clusters_counts * layer.cluster_size / self.peak_memory_bandwidth
                 execute_time += (cpu_latency + compute_latency)
                 energy += (compute_energy + cpu_energy) * self.num_gpu
                 mem_energy += gpu_mem_energy * self.num_gpu
                 compute_energy += (gpu_alu_energy + gpu_onchip_mem_energy) * self.num_gpu
-
+                print(f"layer.name: {layer.name}, layer.type: {layer.type}, energy: {energy}, execute_time: {execute_time}")
         elif layer.type == LayerType.SpAt_Softmax:
 
             for request_id in layer.request_batch.request.keys():
@@ -190,7 +194,7 @@ class GPU:
                 compute_energy += (req_gpu_alu_energy + req_gpu_onchip_mem_energy) * self.num_gpu
                     
 
-        print(f"layer.name: {layer.name}, layer.type: {layer.type}, energy: {energy}, execute_time: {execute_time}")
+        
         return energy, execute_time, mem_energy, compute_energy
 
 
@@ -201,7 +205,7 @@ class PIM:
         self.sparse_enable = config['SPARSE_ENABLE']
         self.num_pim_device = config['NUM_PIM_DEVICE']
         self.num_pim_stack = config['NUM_PIM_STACK']
-        self.num_pch_per_device = config['NUM_PCH_PER_DEVICE']
+        self.num_pch_per_stack = config['NUM_PCH_PER_STACK']
         self.num_bg_per_pch = config['NUM_BG_PER_PCH']
         self.num_row = config['NUM_ROW']
         self.energy_table = config['ENERGY_TABLE']
@@ -220,7 +224,7 @@ class PIM:
 
         if layer.type == LayerType.SpAt_Score_Context:
 
-            pim_activated_table=[[[0 for _ in range(self.num_bg_per_pch)] for _ in range(self.num_pch_per_device)] for _ in range(self.num_pim_stack)]
+            pim_activated_table=[[[0 for _ in range(self.num_bg_per_pch)] for _ in range(self.num_pch_per_stack)] for _ in range(self.num_pim_stack)]
             cluster_mapping_table = pim_profile_table.cluster_mapping_table
             missing_clusters = defaultdict(lambda: defaultdict(list))
             missing_clusters_counts = 0
@@ -239,9 +243,10 @@ class PIM:
                     # default kv_head_id is 0
                     key = (request_id, 0, int(cluster_id))
                     if key in cluster_mapping_table: # PIM cluster hit
-                        device, pch, bg, _ = cluster_mapping_table[key]
+                        stack, pch, bg, _ = cluster_mapping_table[key]
                         pim_profile_table.update(request_id, 0, cluster_id)
-                        pim_activated_table[device][pch][bg] += 1
+                        #print(f"stack: {stack}, pch: {pch}, bg: {bg}")
+                        pim_activated_table[stack][pch][bg] += 1
                         hit_clusters_counts += 1
                     else: # HBF cluster hit
                         hbf_track_table.update(request_id, 0, cluster_id)
@@ -278,23 +283,23 @@ class PIM:
                 
             # PIM execution
             if self.sparse_enable: #sparse pim
-                pim_bg_latency = [0 for _ in range(self.num_pim_stack * self.num_pch_per_device * self.num_bg_per_pch)]
-                pim_bg_energy = [0 for _ in range(self.num_pim_stack * self.num_pch_per_device * self.num_bg_per_pch)]
+                pim_bg_latency = [0 for _ in range(self.num_pim_stack * self.num_pch_per_stack * self.num_bg_per_pch)]
+                pim_bg_energy = [0 for _ in range(self.num_pim_stack * self.num_pch_per_stack * self.num_bg_per_pch)]
                 for stack in range(self.num_pim_stack):
-                    for pch in range(self.num_pch_per_device):
+                    for pch in range(self.num_pch_per_stack):
                         for bg in range(self.num_bg_per_pch):
-                            pim_bg_latency[stack * self.num_pch_per_device * self.num_bg_per_pch + pch * self.num_bg_per_pch + bg] = pim_activated_table[stack][pch][bg] * (self.t_row + 2*self.t_compute * operation_intensity * self.n_compute_per_row) # 2: 1PE FOR 2Banks
-                            pim_bg_energy[stack * self.num_pch_per_device * self.num_bg_per_pch + pch * self.num_bg_per_pch + bg] = pim_activated_table[stack][pch][bg] * (self.e_row + self.e_read * self.n_compute_per_row + self.e_compute * operation_intensity * self.n_compute_per_row) * self.n_bk_per_bg
+                            pim_bg_latency[stack * self.num_pch_per_stack * self.num_bg_per_pch + pch * self.num_bg_per_pch + bg] = pim_activated_table[stack][pch][bg] * (self.t_row + 2*self.t_compute * operation_intensity * self.n_compute_per_row) # 2: 1PE FOR 2Banks
+                            pim_bg_energy[stack * self.num_pch_per_stack * self.num_bg_per_pch + pch * self.num_bg_per_pch + bg] = pim_activated_table[stack][pch][bg] * (self.e_row + self.e_read * self.n_compute_per_row + self.e_compute * operation_intensity * self.n_compute_per_row) * self.n_bk_per_bg
                 pim_execute_time =  max(pim_bg_latency) 
                 pim_energy = sum(pim_bg_energy) * self.num_pim_device 
             else: # pim
-                pim_pch_latency = [0 for _ in range(self.num_pim_stack * self.num_pch_per_device)]
-                pim_pch_energy = [0 for _ in range(self.num_pim_stack * self.num_pch_per_device)]
+                pim_pch_latency = [0 for _ in range(self.num_pim_stack * self.num_pch_per_stack)]
+                pim_pch_energy = [0 for _ in range(self.num_pim_stack * self.num_pch_per_stack)]
                 for stack in range(self.num_pim_stack):
-                    for pch in range(self.num_pch_per_device):
+                    for pch in range(self.num_pch_per_stack):
                         for bg in range(self.num_bg_per_pch):
-                            pim_pch_latency[stack * self.num_pch_per_device + pch] += pim_activated_table[stack][pch][bg] * (self.t_row + 2 * self.t_compute * operation_intensity  * self.n_compute_per_row)
-                            pim_pch_energy[stack * self.num_pch_per_device + pch] += pim_activated_table[stack][pch][bg] * (self.e_row + self.e_read * self.n_compute_per_row + self.e_compute * operation_intensity * self.n_compute_per_row) * self.n_bk_per_pch
+                            pim_pch_latency[stack * self.num_pch_per_stack + pch] += pim_activated_table[stack][pch][bg] * (self.t_row + 2 * self.t_compute * operation_intensity  * self.n_compute_per_row)
+                            pim_pch_energy[stack * self.num_pch_per_stack + pch] += pim_activated_table[stack][pch][bg] * (self.e_row + self.e_read * self.n_compute_per_row + self.e_compute * operation_intensity * self.n_compute_per_row) * self.n_bk_per_pch
                 
                 pim_execute_time = max(pim_pch_latency) 
                 pim_energy = sum(pim_pch_energy) * self.num_pim_device 
@@ -313,7 +318,7 @@ class PIM:
                 n_compute += math.ceil(in2/1024*self.n_bk_per_bg)
 
 
-            execute_time = n_compute/self.num_pim_stack/self.num_pch_per_device *  (self.t_row + 2 * self.t_compute * operation_intensity * 32)
+            execute_time = n_compute/self.num_pim_stack/self.num_pch_per_stack *  (self.t_row + 2 * self.t_compute * operation_intensity * 32)
             energy = n_compute *  (self.e_row + self.e_read * 32 + self.e_compute * operation_intensity *32) * self.n_bk_per_bg
                 # req_execute_time = flops/min(operation_intensity*self.peak_memory_bandwidth, self.peak_flops)
                 # req_gpu_mem_energy = ((in1+out)*self.energy_table['hbm'] + in2*self.energy_table['hbf']) if self.hbf_en else (in1+in2+out)*self.energy_table['hbm']

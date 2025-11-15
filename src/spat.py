@@ -6,7 +6,7 @@ import heapq
 import random
 import numpy as np
 from scipy.stats import zipf
-
+import math
 class Request_SpAt_stat():
 
     def __init__(self, total_cluster, n_block, n_kv_head, seed=321, prob_func="zipf"):
@@ -64,10 +64,10 @@ class Request_SpAt_stat():
 class PIM_Profile_Table():
 
     def __init__(self, config):
-        self.num_pim_device = config['NUM_PIM_DEVICE']
-        self.num_pch_per_device = config['NUM_PCH_PER_DEVICE']
+        self.num_pim_stack = config['NUM_PIM_STACK']
+        self.num_pch_per_stack = config['NUM_PCH_PER_STACK']
         self.num_bg_per_pch = config['NUM_BG_PER_PCH']
-        self.num_row = config['NUM_ROW']
+        self.num_row = math.ceil(config['NUM_ROW']/48)
         self.cluster_mapping_table = {}
         self.profile_table = {}
         self.write_pointer = {}
@@ -85,9 +85,9 @@ class PIM_Profile_Table():
     def build_profile_table(self):
         table = {}
         self.bg_stats = {}
-        for device in range(self.num_pim_device):
+        for device in range(self.num_pim_stack):
             table[device] = {}
-            for pch in range(self.num_pch_per_device):
+            for pch in range(self.num_pch_per_stack):
                 table[device][pch] = {}
                 for bg in range(self.num_bg_per_pch):
                     table[device][pch][bg] = {}
@@ -226,12 +226,12 @@ class PIM_Profile_Table():
         return average, utilization, total_variance
 
 
-    def _update_cluster_mapping_for_entry(self, entry, device, pch, bg, row):
+    def _update_cluster_mapping_for_entry(self, entry, stack, pch, bg, row):
         request_id = entry.get("request_id")
         if request_id is None:
             return
         key = (request_id, entry["kv_head_id"], entry["cluster_id"])
-        self.cluster_mapping_table[key] = (device, pch, bg, row)
+        self.cluster_mapping_table[key] = (stack, pch, bg, row)
 
 
     def _remove_cluster_mapping_for_entry(self, entry):
@@ -243,32 +243,32 @@ class PIM_Profile_Table():
 
 
     def _swap_entries(self, hot_key, hot_row, cold_key, cold_row):
-        hot_device, hot_pch, hot_bg = hot_key
-        cold_device, cold_pch, cold_bg = cold_key
+        hot_stack, hot_pch, hot_bg = hot_key
+        cold_stack, cold_pch, cold_bg = cold_key
 
-        hot_entry = self.profile_table[hot_device][hot_pch][hot_bg][hot_row].copy()
-        cold_entry = self.profile_table[cold_device][cold_pch][cold_bg][cold_row].copy()
+        hot_entry = self.profile_table[hot_stack][hot_pch][hot_bg][hot_row].copy()
+        cold_entry = self.profile_table[cold_stack][cold_pch][cold_bg][cold_row].copy()
 
-        self.profile_table[hot_device][hot_pch][hot_bg][hot_row] = cold_entry
-        self.profile_table[cold_device][cold_pch][cold_bg][cold_row] = hot_entry
+        self.profile_table[hot_stack][hot_pch][hot_bg][hot_row] = cold_entry
+        self.profile_table[cold_stack][cold_pch][cold_bg][cold_row] = hot_entry
 
         self._update_cluster_mapping_for_entry(
-            self.profile_table[hot_device][hot_pch][hot_bg][hot_row],
-            hot_device,
+            self.profile_table[hot_stack][hot_pch][hot_bg][hot_row],
+            hot_stack,
             hot_pch,
             hot_bg,
             hot_row,
         )
         self._update_cluster_mapping_for_entry(
-            self.profile_table[cold_device][cold_pch][cold_bg][cold_row],
-            cold_device,
+            self.profile_table[cold_stack][cold_pch][cold_bg][cold_row],
+            cold_stack,
             cold_pch,
             cold_bg,
             cold_row,
         )
 
-        self._recompute_bg_stats(hot_device, hot_pch, hot_bg)
-        self._recompute_bg_stats(cold_device, cold_pch, cold_bg)
+        self._recompute_bg_stats(hot_stack, hot_pch, hot_bg)
+        self._recompute_bg_stats(cold_stack, cold_pch, cold_bg)
         self._mark_balance_sets_dirty()
 
 
@@ -279,11 +279,11 @@ class PIM_Profile_Table():
             return
         n_scan=0
         while(True):
-            if temp_wp["device"] < self.num_pim_device-1:
+            if temp_wp["device"] < self.num_pim_stack-1:
                 temp_wp["device"] += 1
             else:
                 temp_wp["device"] = 0
-                if temp_wp["pch"] < self.num_pch_per_device-1:
+                if temp_wp["pch"] < self.num_pch_per_stack-1:
                     temp_wp["pch"] += 1
                 else:
                     temp_wp["pch"] = 0
@@ -300,19 +300,19 @@ class PIM_Profile_Table():
             if self.profile_table[temp_wp["device"]][temp_wp["pch"]][temp_wp["bg"]][temp_wp["row"]]["request_id"] is None:
                 self.write_pointer = temp_wp
                 n_scan += 1
-                if n_scan == self.num_pim_device * self.num_pch_per_device * self.num_bg_per_pch * self.num_row:
+                if n_scan == self.num_pim_stack * self.num_pch_per_stack * self.num_bg_per_pch * self.num_row:
                     self.full = 1
                     return
-            if n_scan == self.num_pim_device * self.num_pch_per_device * self.num_bg_per_pch * self.num_row:
+            if n_scan == self.num_pim_stack * self.num_pch_per_stack * self.num_bg_per_pch * self.num_row:
                 self.full = 1
                 return
 
 
-    def _cluster_mapping_update(self, request_id, kv_head_id, cluster_id, device, pch, bg, row):
-        self.cluster_mapping_table[(request_id, kv_head_id, cluster_id)] = (device, pch, bg, row)
+    def _cluster_mapping_update(self, request_id, kv_head_id, cluster_id, stack, pch, bg, row):
+        self.cluster_mapping_table[(request_id, kv_head_id, cluster_id)] = (stack, pch, bg, row)
 
 
-    def _reset_entry(self, device, pch, bg, row):
+    def _reset_entry(self, stack, pch, bg, row):
         entry = {
             "request_id": None,
             "kv_head_id": None,
@@ -320,21 +320,21 @@ class PIM_Profile_Table():
             "counts": 0,
             "hotness_tag": 1,
         }
-        old_counts = self.profile_table[device][pch][bg][row]["counts"]
-        self.profile_table[device][pch][bg][row] = entry
-        self._update_bg_stats(device, pch, bg, row, entry["counts"], old_counts)
+        old_counts = self.profile_table[stack][pch][bg][row]["counts"]
+        self.profile_table[stack][pch][bg][row] = entry
+        self._update_bg_stats(stack, pch, bg, row, entry["counts"], old_counts)
 
 
     def append(self, request_id, kv_head_id, cluster_id):
 
         if self.full == 0:
-            device = self.write_pointer["device"]
+            stack = self.write_pointer["stack"]
             pch = self.write_pointer["pch"]
             bg = self.write_pointer["bg"]
             row = self.write_pointer["row"]
             print(f"Successfully write to PIM Profile Table, request_id: {request_id}, kv_head_id: {kv_head_id}, cluster_id: {cluster_id}")
-            self._write(device, pch, bg, row, request_id, kv_head_id, cluster_id)
-            self._cluster_mapping_update(request_id, kv_head_id, cluster_id, device, pch, bg, row)
+            self._write(stack, pch, bg, row, request_id, kv_head_id, cluster_id)
+            self._cluster_mapping_update(request_id, kv_head_id, cluster_id, stack, pch, bg, row)
             self._wp_update()
             self._recalculate_balance_sets()
         else:
@@ -348,8 +348,8 @@ class PIM_Profile_Table():
         if location is None:
             return
 
-        device, pch, bg, row = location
-        entry = self.profile_table[device][pch][bg][row]
+        stack, pch, bg, row = location
+        entry = self.profile_table[stack][pch][bg][row]
         if (
             entry["request_id"] != request_id
             or entry["kv_head_id"] != kv_head_id
@@ -360,7 +360,7 @@ class PIM_Profile_Table():
         old_counts = entry["counts"]
         entry["counts"] += 1
         entry["hotness_tag"] = entry["counts"] // 62.5
-        self._update_bg_stats(device, pch, bg, row, entry["counts"], old_counts)
+        self._update_bg_stats(stack, pch, bg, row, entry["counts"], old_counts)
         self._recalculate_balance_sets()
 
 
@@ -371,16 +371,16 @@ class PIM_Profile_Table():
 
         if keys_to_remove:
             for key in keys_to_remove:
-                device, pch, bg, row = self.cluster_mapping_table.pop(key)
-                self._reset_entry(device, pch, bg, row)
+                stack, pch, bg, row = self.cluster_mapping_table.pop(key)
+                self._reset_entry(stack, pch, bg, row)
             self._recalculate_balance_sets()
             return
 
     
     def leakage_average(self):
     # 遍历所有device, pch, bg, row位置
-        for device in range(self.num_pim_device):
-            for pch in range(self.num_pch_per_device):
+        for device in range(self.num_pim_stack):
+            for pch in range(self.num_pch_per_stack):
                 for bg in range(self.num_bg_per_pch):
                     for row in range(self.num_row):
                         entry = self.profile_table[device][pch][bg][row]

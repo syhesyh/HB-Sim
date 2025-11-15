@@ -145,7 +145,7 @@ def make_pim_config(
     config["SPARSE_ENABLE"] = sparse_enable
     config["NUM_PIM_DEVICE"] = num_pim_device
     config["NUM_PIM_STACK"] = 4
-    config["NUM_PCH_PER_DEVICE"] = 32
+    config["NUM_PCH_PER_STACK"] = 32
     config["NUM_BG_PER_PCH"] = 16
     config["NUM_ROW"] = 8192
     config["n_compute_per_row"] = 32
