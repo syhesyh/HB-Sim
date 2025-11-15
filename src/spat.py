@@ -19,7 +19,7 @@ class Request_SpAt_stat():
         np.random.seed(seed)
         
         for block in range(n_block):
-            for kv_head in range(n_kv_head):
+            for kv_head in range(1):
                 seed = seed + 1
                 if prob_func == "power_law":
                     # 生成幂律分布的概率

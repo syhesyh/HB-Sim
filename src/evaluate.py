@@ -276,10 +276,10 @@ class PIM:
                     gpu_mem_energy = ((in1+out)*GPU.energy_table['hbm'] + in2*GPU.energy_table['hbf'])
                     gpu_alu_energy = gpu_flops/ 2* GPU.energy_table['alu']
                     gpu_onchip_mem_energy = (in1+in2+out)*(GPU.energy_table['reg'] + GPU.energy_table['l1'] + GPU.energy_table['l2']) *4 # 4: 4 is scaling factor
-                    gpu_energy += (gpu_mem_energy + gpu_alu_energy + gpu_onchip_mem_energy)
+                    gpu_energy += (gpu_mem_energy + gpu_alu_energy + gpu_onchip_mem_energy) * GPU.num_gpu
                     mem_energy += gpu_mem_energy * GPU.num_gpu
                     compute_energy += (gpu_alu_energy + gpu_onchip_mem_energy) * GPU.num_gpu
-                gpu_energy = gpu_energy * GPU.num_gpu
+
                 
             # PIM execution
             if self.sparse_enable: #sparse pim
@@ -315,11 +315,11 @@ class PIM:
                 operation_intensity = m
                 flops = layer.get_flops()
                 in1, in2, out = layer.get_size()
-                n_compute += math.ceil(in2/1024*self.n_bk_per_bg)
+                n_compute += math.ceil(in2/(1024*self.n_bk_per_pch))
 
 
             execute_time = n_compute/self.num_pim_stack/self.num_pch_per_stack *  (self.t_row + 2 * self.t_compute * operation_intensity * 32)
-            energy = n_compute *  (self.e_row + self.e_read * 32 + self.e_compute * operation_intensity *32) * self.n_bk_per_bg
+            energy = n_compute *  (self.e_row + self.e_read * 32 + self.e_compute * operation_intensity *32) * self.n_bk_per_pch * self.num_pim_device
                 # req_execute_time = flops/min(operation_intensity*self.peak_memory_bandwidth, self.peak_flops)
                 # req_gpu_mem_energy = ((in1+out)*self.energy_table['hbm'] + in2*self.energy_table['hbf']) if self.hbf_en else (in1+in2+out)*self.energy_table['hbm']
                 # req_gpu_alu_energy = flops/2*self.energy_table['alu']
@@ -333,8 +333,6 @@ class PIM:
             energy = 0
             execute_time = 0
     
-        energy = energy * self.num_pim_device
-        execute_time = execute_time
         # update table
         return energy, execute_time, mem_energy, compute_energy
 

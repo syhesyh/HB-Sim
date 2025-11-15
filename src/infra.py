@@ -173,7 +173,7 @@ class System:
             self.request_stream.update_arrival_table()
 
         n_iteration = 0
-        warmup_finish = 1 if self.warmup_iteration > 0 else 0
+        warmup_finish = 0 if self.warmup_iteration > 0 else 1
         print(f"start simulation")
         while True:
             if warmup_finish == 0:
