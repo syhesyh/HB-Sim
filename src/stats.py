@@ -43,3 +43,12 @@ def latency_stats():
 def tbt_stats():
     tbt = []
     return tbt
+
+def pim_stats():
+    pim_stats = {
+        "pim_latency": 0,
+        "pim_energy": 0,
+        "sparse_pim_latency": 0,
+        "sparse_pim_energy": 0,
+    }
+    return pim_stats

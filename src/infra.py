@@ -14,14 +14,14 @@ import math
 
 class System:
 
-    def __init__(self, energy_stats, latency_stats, tbt_stats, modelinfos=None, hardware_config=None,request_stream:Request_Stream=None, pim_profile_table:PIM_Profile_Table=None, \
-        hbf_track_table:HBF_Track_Table=None, warmup_iteration=1024, scheduling_interval=64, scheduling_enable=False, dynamic_enable=False):
+    def __init__(self, energy_stats, latency_stats, tbt_stats, modelinfos=None, hardware_config=None,request_batch:Request_Batch=None, request_stream:Request_Stream=None, pim_profile_table:PIM_Profile_Table=None, \
+        hbf_track_table:HBF_Track_Table=None, warmup_iteration=1024, scheduling_interval=64, scheduling_enable=False, dynamic_enable=False, pim_stats=None, test_mode=False):
         self.energy_stats = energy_stats
         self.latency_stats = latency_stats
         self.tbt_stats = tbt_stats
         self.hardware_config = hardware_config
         self.modelinfos = modelinfos
-        self.request_batch = request_stream.request_batch
+        self.request_batch = request_batch if request_batch else request_stream.request_batch
         self.request_stream = request_stream
         self.n_block = modelinfos["n_block"]
         self.device = hardware_config["device"]
@@ -37,15 +37,15 @@ class System:
         self.dynamic_enable = dynamic_enable
         self.scheduling_enable = scheduling_enable
         self.GPU = None
-
-
+        self.pim_stats = pim_stats
+        self.test_mode = test_mode
     def get_offloading_ratio(self):
         if self.dynamic_enable is False:
             model_mem = 2 *480 * 1e9
         else:
             model_mem = 2 *402 * 1e9
         if self.dynamic_enable is False:
-            kv_cache_mem = 4 * self.modelinfos["n_block"] * self.modelinfos["n_kv_head"] * self.modelinfos["dhead"] * self.modelinfos["cluster_size"] * sum(req["total_clusters"] for req in self.request_batch.request.values())
+            kv_cache_mem = 4 * self.modelinfos["n_block"] * self.modelinfos["n_kv_head"] * self.modelinfos["dhead"] * self.modelinfos["cluster_size"] * sum(req["total_cluster"] for req in self.request_batch.request.values())
         else:
             kv_cache_mem = 4 * self.modelinfos["n_block"] * self.modelinfos["n_kv_head"] * self.modelinfos["dhead"] * self.modelinfos["cluster_size"] * sum(req["n_cluster"] for req in self.request_batch.request.values())
 
@@ -54,10 +54,11 @@ class System:
             self.offloading_ratio = 0
         else:
             self.offloading_ratio = (kv_cache_mem-(gpu_mem - model_mem)) / kv_cache_mem
-            
+        self.offloading_ratio = 0
+
         if self.GPU is not None:
             self.GPU.offloading_ratio = self.offloading_ratio
-        #self.offloading_ratio = 0
+        
         print(f"offloading_ratio: {self.offloading_ratio}, kv_cache_mem: {kv_cache_mem/1024/1024/1024}GB, model_mem: {model_mem/1024/1024/1024}GB, gpu_mem: {gpu_mem/1024/1024/1024}GB")
 
         
@@ -80,6 +81,7 @@ class System:
         self.ffn_model = self.transformer_block_build(moe_enable=False)
     
     def sim(self, max_iteration = None):
+        scheduling_success = 0
         now_time = 0
         last_update_time = 1
         n_iteration = 0
@@ -105,15 +107,16 @@ class System:
                                 hit_clusters_counts += 1
                             else: # HBF cluster miss
                                 miss_clusters_counts += 1
-                                self.hbf_track_table.update(request_id, 0, cluster_id)
+                                self.hbf_track_table[request_id].update(request_id, 0, cluster_id)
                     print(f"warmup iteration {i}, hit_clusters_counts: {hit_clusters_counts}, miss_clusters_counts: {miss_clusters_counts}, hit_ratio: {hit_clusters_counts / (hit_clusters_counts + miss_clusters_counts)}")
 
                     if i % self.scheduling_interval == 0:
                         self.pim_profile_table.leakage_average()
-                        self.hbf_track_table.leakage_average()
                         average_utilization, _, total_variance = self.pim_profile_table._get_balance_meta()
                         self.var_history.append((average_utilization, total_variance, 0)) # 0: no scheduling, 1: scheduling
-                        _,n_promotions = promotion(self.hbf_track_table, self.pim_profile_table, 4096)
+                        for request_id in self.hbf_track_table.keys():
+                            self.hbf_track_table[request_id].leakage_average()
+                            _,n_promotions = promotion(self.hbf_track_table[request_id], self.pim_profile_table, 4096)
                         print(f"n_promotions: {n_promotions}")
                         print(f"request_batch: {len(self.request_batch.request)}, average_utilization: {average_utilization}, total_variance: {total_variance}")
 
@@ -190,7 +193,17 @@ class System:
                                 if self.device == DeviceType.GPU and warmup_finish == 1:
                                     energy, latency, mem_energy, compute_energy = self.GPU.execute(layer,self.request_batch)
                                 else: # self.device == DeviceType.PIM
-                                    energy, latency, mem_energy, compute_energy = self.PIM.execute(layer,self.request_batch, self.pim_profile_table, self.hbf_track_table, self.GPU)
+                                    if self.test_mode:
+                                        pim_latency, pim_energy,sparse_pim_latency, sparse_pim_energy = self.PIM.execute(layer,self.request_batch, self.pim_profile_table, self.hbf_track_table, self.GPU)
+                                        self.pim_stats["pim_latency"] += pim_latency
+                                        self.pim_stats["pim_energy"] += pim_energy
+                                        self.pim_stats["sparse_pim_latency"] += sparse_pim_latency
+                                        self.pim_stats["sparse_pim_energy"] += sparse_pim_energy
+                                        if scheduling_success == 1 and layer.type == LayerType.SpAt_Score_Context:
+                                            return pim_latency, pim_energy,sparse_pim_latency, sparse_pim_energy
+                                        #print(f"pim_latency: {pim_latency}, pim_energy: {pim_energy}, sparse_pim_latency: {sparse_pim_latency}, sparse_pim_energy: {sparse_pim_energy}")
+                                    else:
+                                        energy, latency, mem_energy, compute_energy = self.PIM.execute(layer,self.request_batch, self.pim_profile_table, self.hbf_track_table, self.GPU)
                                 if warmup_finish == 1:
                                     self.energy_stats[layer.name] += energy * self.n_block / 2
                                     self.latency_stats[layer.name] += latency * self.n_block / 2
@@ -220,7 +233,18 @@ class System:
                                 if self.device == DeviceType.GPU:
                                     energy, latency, mem_energy, compute_energy = self.GPU.execute(layer,self.request_batch)
                                 else: # self.device == DeviceType.PIM
-                                    energy, latency, mem_energy, compute_energy = self.PIM.execute(layer,self.request_batch, self.pim_profile_table, self.hbf_track_table, self.GPU)
+                                    test =self.test_mode
+                                    if test:
+                                        pim_latency, pim_energy,sparse_pim_latency, sparse_pim_energy = self.PIM.execute(layer,self.request_batch, self.pim_profile_table, self.hbf_track_table, self.GPU)
+                                        self.pim_stats["pim_latency"] += pim_latency
+                                        self.pim_stats["pim_energy"] += pim_energy
+                                        self.pim_stats["sparse_pim_latency"] += sparse_pim_latency
+                                        self.pim_stats["sparse_pim_energy"] += sparse_pim_energy
+                                        if scheduling_success == 1 and layer.type == LayerType.SpAt_Score_Context:
+                                            return pim_latency, pim_energy,sparse_pim_latency, sparse_pim_energy
+                                        #print(f"pim_latency: {pim_latency}, pim_energy: {pim_energy}, sparse_pim_latency: {sparse_pim_latency}, sparse_pim_energy: {sparse_pim_energy}")
+                                    else:
+                                        energy, latency, mem_energy, compute_energy = self.PIM.execute(layer,self.request_batch, self.pim_profile_table, self.hbf_track_table, self.GPU)
                                 if warmup_finish == 1:
                                     self.energy_stats[layer.name] += energy * self.n_block / 2
                                     self.latency_stats[layer.name] += latency * self.n_block / 2
@@ -245,6 +269,7 @@ class System:
                                     iteration_compute_energy += compute_energy * self.n_block / 2
                                     iteration_energy += energy * self.n_block / 2
                                     iteration_latency += latency * self.n_block / 2
+
                     else: # qwen-3
                         iteration_energy = 0
                         iteration_latency = 0
@@ -255,7 +280,17 @@ class System:
                                 if self.device == DeviceType.GPU:
                                     energy, latency, mem_energy, compute_energy = self.GPU.execute(layer,self.request_batch)
                                 else: # self.device == DeviceType.PIM
-                                    energy, latency, mem_energy, compute_energy = self.PIM.execute(layer,self.request_batch, self.pim_profile_table, self.hbf_track_table, self.GPU)
+                                    if self.test_mode:
+                                        pim_latency, pim_energy,sparse_pim_latency, sparse_pim_energy = self.PIM.execute(layer,self.request_batch, self.pim_profile_table, self.hbf_track_table, self.GPU, self.test_mode)
+                                        self.pim_stats["pim_latency"] += pim_latency
+                                        self.pim_stats["pim_energy"] += pim_energy
+                                        self.pim_stats["sparse_pim_latency"] += sparse_pim_latency
+                                        self.pim_stats["sparse_pim_energy"] += sparse_pim_energy
+                                        if scheduling_success == 1 and layer.type == LayerType.SpAt_Score_Context:
+                                            return pim_latency, pim_energy,sparse_pim_latency, sparse_pim_energy
+                                        #print(f"pim_latency: {pim_latency}, pim_energy: {pim_energy}, sparse_pim_latency: {sparse_pim_latency}, sparse_pim_energy: {sparse_pim_energy}")
+                                    else:
+                                        energy, latency, mem_energy, compute_energy = self.PIM.execute(layer,self.request_batch, self.pim_profile_table, self.hbf_track_table, self.GPU)
                                 if warmup_finish == 1:
                                     self.energy_stats[layer.name] += energy * self.n_block / 2
                                     self.latency_stats[layer.name] += latency * self.n_block / 2
@@ -284,53 +319,77 @@ class System:
                 n_iteration += 1
                 if self.device != DeviceType.GPU:
                     average_utilization, _, total_variance = self.pim_profile_table._get_balance_meta()
-                    self.tbt_stats.append((len(self.request_batch.request), iteration_latency, average_utilization, total_variance/average_utilization, n_iteration % self.scheduling_interval))
+                    self.tbt_stats.append((len(self.request_batch.request), iteration_latency, average_utilization, total_variance/average_utilization, (n_iteration % self.scheduling_interval)))
                 else:
                     self.tbt_stats.append((len(self.request_batch.request), iteration_latency, 0, 0, 0))
 
                 print(f"iteration {n_iteration}, request_batch_size: {len(self.request_batch.request)}, iteration_energy: {iteration_energy}, iteration_mem_energy: {iteration_mem_energy}, iteration_latency: {iteration_latency}")
                 request_to_exit = self.request_batch.update()
+                if len(request_to_exit) > 0:
+                    print(f"request_to_exit: {request_to_exit}")
                 if len(request_to_exit) and self.device != DeviceType.GPU:
                     print(f"request_to_exit: {request_to_exit}")
                     for request_id in request_to_exit:
                         self.pim_profile_table.request_exit(request_id)
                         #self.hbf_track_table.request_exit(request_id)
 
-                if self.device != DeviceType.GPU and n_iteration % self.scheduling_interval == 0:
+                if self.device != DeviceType.GPU and (n_iteration % self.scheduling_interval == 0):
                     self.pim_profile_table.leakage_average()
                     average_utilization, _, total_variance = self.pim_profile_table._get_balance_meta()
                     self.var_history.append((average_utilization, total_variance, 0)) # 0: no scheduling, 1: scheduling
                     print(f"request_batch: {len(self.request_batch.request)}, average_utilization: {average_utilization}, total_variance: {total_variance}")
-                    for request_id in self.hbf_track_table.keys():
-                        self.hbf_track_table[request_id].leakage_average()
-                        _,n_promotions = promotion(self.hbf_track_table[request_id], self.pim_profile_table, 4096)
-                        print(f"n_promotions: {n_promotions}")
-                    if warmup_finish == 1:
-                        self.energy_stats["promotion"] += 2 * n_promotions * (2*2*128*16) * (self.GPU.energy_table['hbm'] + self.GPU.energy_table['hbm']) * self.n_device
-                        self.latency_stats["promotion"] +=  n_promotions * (2*2*128*16) / self.GPU.hbf_memory_bandwidth + n_promotions * (2*2*128*16) / self.GPU.hbm_memory_bandwidth
-
-
+                    #if self.scheduling_enable:
                     if self.scheduling_enable:
-                        n_swaps = 0
-                        for error_threshold in [0.4, 0.2, 0.1, 0.05]:
-                            initial_variance, final_variance, balance_history, swaps = self.pim_profile_table.greedy_balance_load(error_threshold)
-                            n_swaps += swaps
-                            self.balance_history.append([balance_history, error_threshold])
-                        self.var_history.append((average_utilization, total_variance, 1))
+                        print(f"Scheduling")
+                        for request_id in self.hbf_track_table.keys():
+                            self.hbf_track_table[request_id].leakage_average()
+                            _,n_promotions = promotion(self.hbf_track_table[request_id], self.pim_profile_table, 4096)
+                            #print(f"n_promotions: {n_promotions}")
                         if warmup_finish == 1:
-                            # TODO: more accurate energy and latency calculation
-                            self.energy_stats["balance"] += 2 * n_swaps * (2*4*1024*8) * (self.GPU.energy_table['hbm'] + self.GPU.energy_table['hbm']) * self.n_device
-                            self.latency_stats["balance"] += 2 * 2 * n_swaps * (2*4*1024*8) / self.GPU.hbm_memory_bandwidth
-                        print(f"n_swaps: {n_swaps}, variance: {initial_variance}, final_variance: {final_variance}")
+                            self.energy_stats["promotion"] += 2 * n_promotions * (2*2*128*16) * (self.GPU.energy_table['hbm'] + self.GPU.energy_table['hbm']) * self.n_device
+                            self.latency_stats["promotion"] +=  n_promotions * (2*2*128*16) / self.GPU.hbf_memory_bandwidth + n_promotions * (2*2*128*16) / self.GPU.hbm_memory_bandwidth
 
+                        if self.scheduling_enable:
+                            n_swaps = 0
+                            for error_threshold in [0.4, 0.2, 0.1, 0.05]:
+                                initial_variance, final_variance, balance_history, swaps = self.pim_profile_table.greedy_balance_load(error_threshold)
+                                n_swaps += swaps
+                                self.balance_history.append([balance_history, error_threshold])
+                            self.var_history.append((average_utilization, total_variance, 1))
+                            if warmup_finish == 1:
+                                # TODO: more accurate energy and latency calculation
+                                self.energy_stats["balance"] += 2 * n_swaps * (2*4*1024*8) * (self.GPU.energy_table['hbm'] + self.GPU.energy_table['hbm']) * self.n_device
+                                self.latency_stats["balance"] += 2 * 2 * n_swaps * (2*4*1024*8) / self.GPU.hbm_memory_bandwidth
+                            print(f"n_swaps: {n_swaps}, variance: {initial_variance}, final_variance: {final_variance}")
+                    else:
+                        if self.test_mode:
+                            print(f"Promotion LRU")
+                            for request_id in self.hbf_track_table.keys():
+                                self.hbf_track_table[request_id].leakage_average()
+                                #print(f"Promotion LRU")
+                                _,n_promotions = promotion_lru(self.hbf_track_table[request_id], self.pim_profile_table, 4096)
+                                #print(f"n_promotions: {n_promotions}")
+                    scheduling_success = 1
+                            # if self.scheduling_enable and n_iteration % self.scheduling_interval == 0:
+                            #     n_swaps = 0
+                            #     print(f"Load Balance")
+                            #     for error_threshold in [0.4, 0.2, 0.1, 0.05]:
+                            #         initial_variance, final_variance, balance_history, swaps = self.pim_profile_table.greedy_balance_load(error_threshold)
+                            #         n_swaps += swaps
+                            #         self.balance_history.append([balance_history, error_threshold])
+                            #     print(f"n_swaps: {n_swaps}")
+                                
 
             # dynamic arrival request
             if self.dynamic_enable:
                 now_time += iteration_latency*self.modelinfos["cluster_size"]
+                if iteration_latency > 2:
+                    break
                 if now_time > last_update_time + 1:
-                    n_new_requests = self.request_stream.add_new_requests()
-                    print(f"Add n_new_requests: {n_new_requests}")
-                    last_update_time = now_time
+                    if self.request_stream is not None:
+                        n_new_requests = self.request_stream.add_new_requests()
+                        print(f"Add n_new_requests: {n_new_requests}")
+                        last_update_time = now_time
 
 
             self.get_offloading_ratio()

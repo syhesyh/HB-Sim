@@ -1,0 +1,3 @@
+model,sparse_enable,scheduling_enable,qps,hardware_name,pim_latency,pim_energy,sparse_pim_latency,sparse_pim_energy
+qwen3,True,True,0.0,pim,0,0,0,0
+qwen3,True,True,0.0,pim,1.0885424226054432,0.17419366362640007,0.0015907840000000037,0.05483288772640137

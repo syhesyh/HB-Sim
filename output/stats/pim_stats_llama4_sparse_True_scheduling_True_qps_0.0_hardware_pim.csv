@@ -1,0 +1,2 @@
+model,sparse_enable,scheduling_enable,qps,hardware_name,pim_latency,pim_energy,sparse_pim_latency,sparse_pim_energy
+llama4,True,True,0.0,pim,0.00586475347968,1.1033671875e-05,0.0,0.0

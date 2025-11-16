@@ -1,0 +1,9 @@
+model,sparse_enable,scheduling_enable,qps,hardware_name,iteration,request_batch_size,iteration_latency,average_utilization,normalized_variance,scheduling_remainder
+qen3,True,False,0.0,pim,1,64,0.0051842737469511724,0.0,nan,1
+qen3,True,False,0.0,pim,2,64,0.0051842737469511724,0.0,nan,2
+qen3,True,False,0.0,pim,3,64,0.0051842737469511724,0.0,nan,3
+qen3,True,False,0.0,pim,4,64,0.0051842737469511724,0.0,nan,0
+qen3,True,False,0.0,pim,1,64,0.0050282688483518235,0.0,nan,1
+qen3,True,False,0.0,pim,2,64,0.0050282688483518235,0.0,nan,2
+qen3,True,False,0.0,pim,3,64,0.0050282688483518235,0.0,nan,3
+qen3,True,False,0.0,pim,4,64,0.0050282688483518235,0.0,nan,0

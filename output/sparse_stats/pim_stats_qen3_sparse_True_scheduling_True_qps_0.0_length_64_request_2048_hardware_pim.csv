@@ -1,0 +1,2 @@
+model,request,length,sparse_enable,scheduling_enable,qps,hardware_name,pim_latency,pim_energy,sparse_pim_latency,sparse_pim_energy
+qen3,64,2048,True,True,0.0,pim,8.626e-06,0.0006978261811199999,1.5535000000000003e-05,0.0002894306611200048

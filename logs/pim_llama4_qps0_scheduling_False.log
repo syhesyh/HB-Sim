@@ -1,0 +1,2 @@
+/home/syhe/HB_simulator/src/infra.py:318: RuntimeWarning: invalid value encountered in scalar divide
+  self.tbt_stats.append((len(self.request_batch.request), iteration_latency, average_utilization, total_variance/average_utilization, (n_iteration % self.scheduling_interval)))

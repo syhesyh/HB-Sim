@@ -8,6 +8,15 @@ import numpy as np
 from scipy.stats import zipf
 import math
 
+# 全局LRU时间戳计数器
+_lru_counter = 0
+
+def get_lru_timestamp():
+    """获取当前LRU时间戳"""
+    global _lru_counter
+    _lru_counter += 1
+    return _lru_counter
+
 
 class PIM_Profile_Table():
 
@@ -46,11 +55,13 @@ class PIM_Profile_Table():
                             "cluster_id": None,
                             "counts": 0,
                             "hotness_tag": 1,
+                            "lru_timestamp": 0,  # LRU时间戳
                         }
                     self.bg_stats[(device, pch, bg)] = {
                         "total_counts": 0,
                         "max_row": 0 if self.num_row > 0 else None,
                         "min_row": 0 if self.num_row > 0 else None,
+                        "lru_row": None,  # 最久未使用的row（用于LRU策略）
                     }
 
         self.profile_table = table
@@ -63,7 +74,8 @@ class PIM_Profile_Table():
             "kv_head_id": kv_head_id,
             "cluster_id": cluster_id,
             "counts": counts,
-            "hotness_tag": counts//62.5
+            "hotness_tag": counts//62.5,
+            "lru_timestamp": get_lru_timestamp()  # 更新LRU时间戳
         }
         self._update_bg_stats(device, pch, bg, row, counts, old_counts)
 
@@ -74,6 +86,24 @@ class PIM_Profile_Table():
 
     def _get_row_counts(self, device, pch, bg, row):
         return self.profile_table[device][pch][bg][row]["counts"]
+    
+    def _find_lru_row(self, device, pch, bg):
+        """找到指定bg中最久未使用的row（LRU）"""
+        lru_row = None
+        lru_timestamp = None
+        for row in range(self.num_row):
+            entry = self.profile_table[device][pch][bg][row]
+            if entry["request_id"] is None:
+                continue
+            timestamp = entry["lru_timestamp"]
+            if lru_timestamp is None or timestamp < lru_timestamp:
+                lru_timestamp = timestamp
+                lru_row = row
+        return lru_row
+    
+    def _update_bg_lru_row(self, device, pch, bg):
+        """更新bg的lru_row统计"""
+        self.bg_stats[(device, pch, bg)]["lru_row"] = self._find_lru_row(device, pch, bg)
 
 
     def _find_extreme_row(self, device, pch, bg, find_max):
@@ -117,6 +147,9 @@ class PIM_Profile_Table():
         elif min_row == row and new_counts > old_counts:
             stats["min_row"] = self._find_extreme_row(device, pch, bg, find_max=False)
 
+        # 更新LRU row
+        self._update_bg_lru_row(device, pch, bg)
+        
         self._mark_balance_sets_dirty()
 
 
@@ -141,6 +174,8 @@ class PIM_Profile_Table():
         stats["total_counts"] = total_counts
         stats["max_row"] = max_row
         stats["min_row"] = min_row
+        # 重新计算LRU row
+        stats["lru_row"] = self._find_lru_row(device, pch, bg)
         self._mark_balance_sets_dirty()
 
 
@@ -267,6 +302,7 @@ class PIM_Profile_Table():
             "cluster_id": None,
             "counts": 0,
             "hotness_tag": 1,
+            "lru_timestamp": 0,
         }
         old_counts = self.profile_table[stack][pch][bg][row]["counts"]
         self.profile_table[stack][pch][bg][row] = entry
@@ -308,6 +344,8 @@ class PIM_Profile_Table():
         old_counts = entry["counts"]
         entry["counts"] += 1
         entry["hotness_tag"] = entry["counts"] // 62.5
+        # 更新LRU时间戳（访问时）
+        entry["lru_timestamp"] = get_lru_timestamp()
         self._update_bg_stats(stack, pch, bg, row, entry["counts"], old_counts)
         self._recalculate_balance_sets()
 
@@ -378,7 +416,7 @@ class PIM_Profile_Table():
 
             hot_counts = self._get_row_counts(*hot_key, hot_row)
             cold_counts = self._get_row_counts(*cold_key, cold_row)
-
+            #print(f"hot_counts: {hot_counts}, cold_counts: {cold_counts}")
             if hot_counts <= cold_counts:
                 swaps = swaps - 1 if swaps > 0 else 0
                 break
@@ -447,7 +485,8 @@ class HBF_Track_Table():
             "kv_head_id": kv_head_id,
             "cluster_id": cluster_id,
             "counts": counts,
-            "hotness_tag": counts//62.5
+            "hotness_tag": counts//62.5,
+            "lru_timestamp": get_lru_timestamp()  # 添加LRU时间戳
         }
         self.entries[key] = entry
         self._push_heap(key, counts)
@@ -462,6 +501,7 @@ class HBF_Track_Table():
             entry = self.entries[key]
             entry["counts"] += weight
             entry["hotness_tag"] = entry["counts"] // 62.5
+            entry["lru_timestamp"] = get_lru_timestamp()  # 更新LRU时间戳（访问时）
             self._push_heap(key, entry["counts"])
             return entry
 
@@ -479,6 +519,15 @@ class HBF_Track_Table():
     def top_k(self, k=None):
         items = sorted(
             self.entries.values(), key=lambda entry: entry["counts"], reverse=True
+        )
+        if k is not None:
+            items = items[:k]
+        return copy.deepcopy(items)
+    
+    def top_k_lru(self, k=None):
+        """返回最近访问的k个条目（用于LRU promotion，选择最近访问的来promote）"""
+        items = sorted(
+            self.entries.values(), key=lambda entry: entry.get("lru_timestamp", 0), reverse=True
         )
         if k is not None:
             items = items[:k]
@@ -599,6 +648,164 @@ def promotion(hbf_table, pim_table, k=None):
                     break
             else:
                 # 如果当前 bank 的 min_row 不够小，继续尝试下一个 bank
+                continue
+        
+        # 如果找不到合适的替换目标，停止处理剩余的 HBF 候选
+        if not found:
+            break
+
+    pim_table._recalculate_balance_sets()
+    return promotions, n_promotions
+
+
+def promotion_lru(hbf_table, pim_table, k=None):
+    """
+    基于LRU的promotion函数
+    选择HBF中最近访问的条目来promote，替换PIM中最久未使用的条目
+    
+    Args:
+        hbf_table: HBF跟踪表
+        pim_table: PIM配置表
+        k: 最多promote的条目数
+    
+    Returns:
+        (promotions, n_promotions): promotion列表和数量
+    """
+    if hbf_table is None or pim_table is None:
+        raise ValueError("hbf_table and pim_table must be provided")
+
+    # LRU策略：选择HBF中最近访问的条目（lru_timestamp最大的）来promote
+    hbf_candidates = hbf_table.top_k_lru(k)
+    
+    # 检查 HBF 候选是否为空
+    if not hbf_candidates:
+        return [], 0
+
+    average, utilization, _ = pim_table._get_balance_meta()
+
+    # 先按照冷 bg 与平均值的差距从大到小排序，差距越大优先级越高；再把其余 bg 也按总计数从低到高排列，拼成优先队列 key_order。
+    cold_keys = sorted(
+        pim_table.cold_set,
+        key=lambda key: abs(average - utilization[key]),
+        reverse=True,
+    )
+    remaining_keys = sorted(
+        [key for key in utilization.keys() if key not in pim_table.cold_set],
+        key=lambda key: utilization[key],
+    )
+    key_order = cold_keys + remaining_keys
+    
+    # 检查 key_order 是否为空
+    if not key_order:
+        return [], 0
+
+    promotions = []
+    n_promotions = 0
+    key_index = 0  # 当前在 key_order 中的索引
+    
+    def find_replacement_row(device, pch, bg):
+        """找到可以替换的row：优先找空row，如果没有空row则使用LRU row"""
+        # 先找第一个空的row（优先使用空row）
+        for row in range(pim_table.num_row):
+            entry = pim_table.profile_table[device][pch][bg][row]
+            if entry["request_id"] is None:
+                return row
+        
+        # 如果没有空row，使用LRU row（最久未使用的row）
+        lru_row = pim_table.bg_stats[(device, pch, bg)]["lru_row"]
+        if lru_row is not None:
+            return lru_row
+        
+        # 如果LRU row也为None（理论上不应该发生，因为如果没有空row应该有LRU row）
+        # 返回None，让调用者处理
+        return None
+    
+    for entry in hbf_candidates:
+        # 尝试找到一个合适的 PIM 条目进行替换
+        found = False
+        attempts = 0
+        max_attempts = len(key_order) * 2  # 允许尝试更多次，因为可能有多轮
+        
+        while attempts < max_attempts and not found:
+            # 循环遍历 key_order，允许重复访问同一个 bank
+            key = key_order[key_index % len(key_order)]
+            key_index += 1
+            attempts += 1
+            
+            device, pch, bg = key
+            # 优先使用LRU row，如果为None则找空row
+            row = find_replacement_row(device, pch, bg)
+            if row is None:
+                continue
+            
+            pim_entry = pim_table.profile_table[key[0]][key[1]][key[2]][row]
+            pim_timestamp = pim_entry.get("lru_timestamp", 0)
+            hbf_timestamp = entry.get("lru_timestamp", 0)
+            
+            # 如果HBF条目的时间戳更新（更大），说明HBF条目更最近被访问，应该promote
+            # 同时PIM条目是最久未使用的，应该被替换
+            # 允许pim_timestamp为0的情况（从未访问过或刚初始化的条目应该优先被替换）
+            # 只要HBF条目比PIM条目更新，或者PIM条目从未被访问过（timestamp=0），就可以替换
+            if hbf_timestamp > pim_timestamp or pim_timestamp == 0:
+                device, pch, bg = key
+                old_entry = copy.deepcopy(pim_table.profile_table[device][pch][bg][row])
+                pim_table._remove_cluster_mapping_for_entry(old_entry)
+                
+                # 写入新条目，保留被替换条目的counts
+                new_counts = old_entry.get("counts", entry["counts"])
+                pim_table._write(
+                    device,
+                    pch,
+                    bg,
+                    row,
+                    entry["request_id"],
+                    entry["kv_head_id"],
+                    entry["cluster_id"],
+                    new_counts,
+                )
+                pim_table._cluster_mapping_update(
+                    entry["request_id"],
+                    entry["kv_head_id"],
+                    entry["cluster_id"],
+                    device,
+                    pch,
+                    bg,
+                    row,
+                )
+                
+                # 重新计算该 bank 的统计信息
+                pim_table._recompute_bg_stats(device, pch, bg)
+                
+                # 在 HBF 中用被替换的 PIM 条目替换晋升的条目
+                hbf_table.remove(entry["request_id"], entry["kv_head_id"], entry["cluster_id"])
+                if old_entry["request_id"] is not None and old_entry["counts"] > 0:
+                    # 保留被替换条目的counts和lru_timestamp
+                    old_entry_copy = copy.deepcopy(old_entry)
+                    hbf_table._insert_entry(
+                        old_entry_copy["request_id"],
+                        old_entry_copy["kv_head_id"],
+                        old_entry_copy["cluster_id"],
+                        old_entry_copy["counts"],
+                    )
+                    # 恢复被替换条目的lru_timestamp
+                    if "lru_timestamp" in old_entry_copy:
+                        key_old = (old_entry_copy["request_id"], old_entry_copy["kv_head_id"], old_entry_copy["cluster_id"])
+                        if key_old in hbf_table.entries:
+                            hbf_table.entries[key_old]["lru_timestamp"] = old_entry_copy["lru_timestamp"]
+
+                promotions.append(
+                    {
+                        "hbf_entry": entry,
+                        "replaced_entry": old_entry,
+                        "location": {"device": device, "pch": pch, "bg": bg, "row": row},
+                    }
+                )
+                n_promotions += 1
+                found = True
+                if k is not None and n_promotions >= k:
+                    break
+            else:
+                # 如果当前条件不满足，继续尝试下一个 bank
                 continue
         
         # 如果找不到合适的替换目标，停止处理剩余的 HBF 候选

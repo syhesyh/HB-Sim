@@ -50,6 +50,18 @@ LATENCY_FIELDS = [
     "balance",
     "sum",
 ]
+
+def str_to_bool(v):
+    """将字符串转换为布尔值"""
+    if isinstance(v, bool):
+        return v
+    if v.lower() in ('yes', 'true', 't', 'y', '1'):
+        return True
+    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+        return False
+    else:
+        raise argparse.ArgumentTypeError('Boolean value expected.')
+
 def parse_args():
     parser = argparse.ArgumentParser(description="PIM Simulation Runner")
 
@@ -62,7 +74,7 @@ def parse_args():
     parser.add_argument("--request", type=int, default=64,
                         help="Number of requests (default: 64)")
 
-    parser.add_argument("--warmup", type=int, default=256,
+    parser.add_argument("--warmup", type=int, default=0,
                         help="Warmup iteration (default: 128)")
 
     parser.add_argument("--hw", type=str, default="pim",
@@ -71,15 +83,15 @@ def parse_args():
     parser.add_argument("--scheduling_interval", type=int, default=16,
                         help="Scheduling interval (default: 64)")
 
-    parser.add_argument("--dynamic_enable", type=bool, default=True,
-                        help="Dynamic enable: True or False (default: False)")
+    parser.add_argument("--dynamic_enable", type=str_to_bool, default=False,
+                        help="Dynamic enable: True or False (default: True)")
 
-    parser.add_argument("--scheduling_enable", type=bool, default=True,
-                        help="Scheduling enable: True or False (default: False)")
-
+    parser.add_argument("--scheduling_enable", type=str_to_bool, default=True,
+                        help="Scheduling enable: True or False (default: True)")
+    parser.add_argument("--test_mode", type=str_to_bool, default=True,
+                        help="Test mode: True or False (default: True)")
     parser.add_argument("--qps", type=float, default=4,
                         help="QPS (default: 4)")
-
     parser.add_argument("--activation_ratio", type=float, default=0.1,
                         help="Activation ratio (default: 0.1)")
     parser.add_argument("--max_iter", type=int, default=1024,
@@ -88,7 +100,7 @@ def parse_args():
                         help="Output directory (default: ../output/qps/qps.csv)")
     parser.add_argument("--stats_output_dir", type=str, default="../output/stats",
                         help="Output directory (default: ../output/qps/qps.csv)")
-    parser.add_argument("--sparse_enable", type=bool, default=True,)
+    parser.add_argument("--sparse_enable", type=str_to_bool, default=True,)
 
     return parser.parse_args()
 
@@ -163,6 +175,39 @@ def write_tbt_csv(output_dir, model_name, sparse_enable, scheduling_enable, qps,
     print(f"[CSV] 已写入 TBT 统计到 {csv_file} (共 {len(tbt_stats_list)} 行)")
 
 
+def write_pim_stats_csv(output_dir, model_name, length, request, sparse_enable, scheduling_enable, qps, hardware_name, pim_stats_dict):
+    """
+    将 pim_stats 保存为 CSV
+    文件名: pim_stats_{model}_sparse_{sparse_enable}_scheduling_{scheduling_enable}_qps_{qps}_length_{length}_request_{request}_hardware_{hardware_name}.csv
+    列: model, length, request, sparse_enable, scheduling_enable, qps, hardware_name, pim_latency, pim_energy, sparse_pim_latency, sparse_pim_energy
+    """
+    # 确保输出目录存在
+    os.makedirs(output_dir, exist_ok=True)
+    
+    csv_file = f"{output_dir}/pim_stats_{model_name}_sparse_{sparse_enable}_scheduling_{scheduling_enable}_qps_{qps}_length_{length}_request_{request}_hardware_{hardware_name}.csv"
+    write_header = not os.path.exists(csv_file)
+
+    with open(csv_file, "a", newline="") as f:
+        writer = csv.writer(f)
+        if write_header:
+            header = [
+                "model", "request", "length", "sparse_enable", "scheduling_enable", "qps", "hardware_name",
+                "pim_latency", "pim_energy", "sparse_pim_latency", "sparse_pim_energy"
+            ]
+            writer.writerow(header)
+
+        row = [
+            model_name, length, request, sparse_enable, scheduling_enable, qps, hardware_name,
+            pim_stats_dict.get("pim_latency", 0),
+            pim_stats_dict.get("pim_energy", 0),
+            pim_stats_dict.get("sparse_pim_latency", 0),
+            pim_stats_dict.get("sparse_pim_energy", 0)
+        ]
+        writer.writerow(row)
+    
+    print(f"[CSV] 已写入PIM统计到 {csv_file}")
+
+
 if __name__ == "__main__":
     args = parse_args()
 
@@ -193,12 +238,12 @@ if __name__ == "__main__":
     ###new request stream
 
     tbt_stats = tbt_stats()
+    pim_stats = pim_stats()
 
-
-    if args.hw.lower() == "gpu":
+    if args.hw.lower() == "gpu" or args.hw.lower() == "ugpu":
         # 注意：这里使用命令行中的 model/length/request，这样和你传参一致
         request_tracking_table = None
-        Request_Stream = Request_Stream(args.qps, args.activation_ratio, model, initial_request_count=args.request, request_tracking_table=request_tracking_table)
+        Request_Stream = Request_Stream(args.qps, args.activation_ratio, model, initial_request_count=args.request, request_tracking_table=request_tracking_table, dynamic_enable=args.dynamic_enable)
         Host_request_stream = Request_Stream
         Host_pim_profile_table = None
         Host_hbf_track_table = None
@@ -220,7 +265,8 @@ if __name__ == "__main__":
             warmup_iteration=0,
             scheduling_interval=args.scheduling_interval,
             scheduling_enable=args.scheduling_enable,
-            dynamic_enable=args.dynamic_enable
+            dynamic_enable=args.dynamic_enable,
+            test_mode=args.test_mode
         )
         gpu_system.system_setup()
         gpu_system.sim(max_iteration=args.max_iter)
@@ -261,16 +307,22 @@ if __name__ == "__main__":
 
     else:
         request_tracking_table = {}
-        PIM_request_stream = Request_Stream(args.qps, args.activation_ratio, model, initial_request_count=args.request, request_tracking_table=request_tracking_table)
+        #PIM_request_stream = Request_Stream(args.qps, args.activation_ratio, model, initial_request_count=args.request, request_tracking_table=request_tracking_table, dynamic_enable=args.dynamic_enable)
+        PIM_request_stream = None
         PIM_pim_profile_table = PIM_Profile_Table(Hardware_config_PIM["PIM"])
         PIM_pim_profile_table.build_profile_table()
+        
+        PIM_request_batch = Request_Batch(0.10, Model)
+        for i in range(args.request):
+            PIM_request_batch.append(i, args.length+256, args.length+256+256+4)
+        for request_id, request_info in PIM_request_batch.request.items():
 
-        # for request_id, request_info in PIM_request_stream.request_batch.request.items():
+            request_tracking_table[request_id] = HBF_Track_Table(1.5*request_info["total_cluster"] / 10)
 
-        #     request_tracking_table[request_id] = HBF_Track_Table(request_info["total_cluster"] / 10)
-
+        print(args.scheduling_enable)
         pim_energy_stats = energy_stats()
         pim_latency_stats = latency_stats()
+        pim_stats = pim_stats
 
         pim_system = infra.System(
             pim_energy_stats,
@@ -278,17 +330,24 @@ if __name__ == "__main__":
             tbt_stats,
             model,
             Hardware_config_PIM,
+            request_batch=PIM_request_batch,
             request_stream=PIM_request_stream,
             pim_profile_table=PIM_pim_profile_table,
             hbf_track_table=request_tracking_table,
             warmup_iteration=args.warmup,
             scheduling_interval=args.scheduling_interval,
             scheduling_enable=args.scheduling_enable,
-            dynamic_enable=args.dynamic_enable
+            dynamic_enable=args.dynamic_enable,
+            pim_stats=pim_stats,
+            test_mode=args.test_mode
         )
 
         pim_system.system_setup()
-        pim_system.sim(max_iteration=args.max_iter)
+        pim_latency, pim_energy,sparse_pim_latency, sparse_pim_energy = pim_system.sim(max_iteration=args.max_iter)
+        pim_stats["sparse_pim_latency"] = sparse_pim_latency
+        pim_stats["sparse_pim_energy"] = sparse_pim_energy
+        pim_stats["pim_latency"] = pim_latency
+        pim_stats["pim_energy"] = pim_energy
 
         print("\n========== Simulation Finished ==========")
         print(f"pim_energy : {pim_system.energy_stats}")
@@ -321,3 +380,17 @@ if __name__ == "__main__":
             "pim",
             pim_system.tbt_stats
         )
+        
+        # 写 PIM 统计 CSV（如果存在pim_stats）
+        if pim_system.pim_stats is not None:
+            write_pim_stats_csv(
+                "../output/sparse_stats",
+                args.model,
+                args.request,
+                args.length,
+                args.sparse_enable,
+                args.scheduling_enable,
+                args.qps,
+                "pim",
+                pim_system.pim_stats
+            )

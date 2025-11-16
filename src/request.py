@@ -4,18 +4,23 @@ from scipy.stats import zipf
 from src.spat import *
 class Request_SpAt_stat():
 
-    def __init__(self, total_cluster, n_block, n_kv_head, seed=321, prob_func="zipf"):
-        self.alpha = 1.0
+    def __init__(self, total_cluster, n_block, n_kv_head, seed=None, prob_func="zipf"):
+        self.alpha = 2.5
         self.s = 1.1
         self.n_kv_head = n_kv_head
         self.total_cluster = total_cluster
         self.n_block = n_block
         self.activated_prob_table=[[[0 for _ in range(total_cluster)] for _ in range(n_kv_head)] for _ in range(n_block)]
-        np.random.seed(seed)
+        # 如果seed为None，不设置种子，使用系统时间作为随机源（完全随机）
+        # 如果用户需要固定种子用于调试，可以传入具体的seed值
+        if seed is not None:
+            np.random.seed(seed)
+        # 否则不设置种子，让numpy使用默认的随机状态（基于系统时间）
         
         for block in range(n_block):
             for kv_head in range(1):
-                seed = seed + 1
+                # 不再修改seed，保持随机性
+                # seed = seed + 1
                 if prob_func == "power_law":
                     # 生成幂律分布的概率
                     indices = np.arange(1, total_cluster + 1)
@@ -51,6 +56,8 @@ class Request_SpAt_stat():
         
     def get_activated_prob(self, block, kv_head, n_clusters):
         # 已存在的cluster归一化
+        # 不需要重新设置种子，保持随机状态
+        # np.random.seed(seed)  # 移除此行，seed变量未定义且不需要固定种子
         return self.activated_prob_table[block][kv_head][:n_clusters]/self.activated_prob_table[block][kv_head][:n_clusters].sum()
 
 
@@ -66,8 +73,8 @@ class Request_Batch:
         self.request = {}
 
     def append(self, id, input_cluster, total_cluster):
-        # id as random seed
-        activation_table = Request_SpAt_stat(total_cluster, 1, 1, id)
+        # 使用随机种子（传入None），不再使用id作为固定种子
+        activation_table = Request_SpAt_stat(total_cluster, 1, 1, seed=None)
         self.request[id] = {"n_cluster": input_cluster, "n_activated_clusters": math.ceil(input_cluster*self.activation_ratio), "total_cluster": total_cluster, "activation_table": activation_table}
         return self.request
 
@@ -99,7 +106,7 @@ class Request_Batch:
 
         
 class Request_Stream:
-    def __init__(self, poisson_lambda, activation_ratio, modelinfos, initial_request_count=None, request_tracking_table=None):
+    def __init__(self, poisson_lambda, activation_ratio, modelinfos, initial_request_count=None, request_tracking_table=None, dynamic_enable=False):
         """
         Args:
             poisson_lambda: 泊松分布参数
@@ -116,7 +123,10 @@ class Request_Stream:
         self.request_batch = Request_Batch(activation_ratio, modelinfos)
         
         # 生成初始请求序列
-        self.generate_initial_requests(initial_request_count)
+        if dynamic_enable:
+            self.generate_initial_requests(initial_request_count)
+        else:
+            self.generate_static_requests(initial_request_count, 2048, 128)
     
     def generate_initial_requests(self, initial_request_count):
         """生成初始请求序列"""
@@ -128,6 +138,15 @@ class Request_Stream:
             self.request_batch.append(self.request_id_counter, n_cluster, total_cluster)
             if self.request_tracking_table is not None:
                 self.request_tracking_table[self.request_id_counter] = HBF_Track_Table(1.5*total_cluster / self.activation_ratio)
+
+    def generate_static_requests(self, initial_request_count, total_clusters, warmup_iteration):
+        """生成初始请求序列"""
+        for _ in range(initial_request_count):
+
+            self.request_id_counter += 1
+            self.request_batch.append(self.request_id_counter, total_clusters, total_clusters + warmup_iteration +128)
+            if self.request_tracking_table is not None:
+                self.request_tracking_table[self.request_id_counter] = HBF_Track_Table(1.5*total_clusters / self.activation_ratio)
 
     def add_new_requests(self):
         """动态加入新请求，数量遵从泊松分布"""

@@ -177,7 +177,7 @@ class PIM:
         self.n_bk_per_bg = 4
         self.n_bk_per_pch = 64
 
-    def execute(self, layer, request_batch=None, pim_profile_table:PIM_Profile_Table=None, hbf_track_table:HBF_Track_Table=None, GPU=None, block_id=0):
+    def execute(self, layer, request_batch=None, pim_profile_table:PIM_Profile_Table=None, hbf_track_table:HBF_Track_Table=None, GPU=None, block_id=0, test_mode=False):
         #print(f"PIM execute layer: {layer.name}, type: {layer.type}")
         mem_energy, compute_energy = 0, 0
 
@@ -189,6 +189,8 @@ class PIM:
             missing_clusters_counts = 0
             hit_clusters_counts = 0
             activated_clusters_table = request_batch.gen_activated_clusters()
+            n_requests = len(activated_clusters_table)
+            #print(f"n_requests: {n_requests}")
             # if request_batch is not None:
             #     for kv_head_id in range(layer.n_kv_head):
             #         activated_clusters_table[kv_head_id] = request_batch.gen_activated_clusters(block_id, kv_head_id)
@@ -219,6 +221,7 @@ class PIM:
             # gpu_flops = layer.get_flops()
             # in1, in2, out = layer.get_size()
             m = layer.m
+            n = layer.head_dim
             operation_intensity = m
              # GPU execution
             if missing_clusters_counts > 0:
@@ -242,31 +245,57 @@ class PIM:
 
                 
             # PIM execution
-            if self.sparse_enable: #sparse pim
+            test =1
+            if test:
+                pim_execute_time = 0
+                pim_energy = 0
                 pim_bg_latency = [0 for _ in range(self.num_pim_stack * self.num_pch_per_stack * self.num_bg_per_pch)]
                 pim_bg_energy = [0 for _ in range(self.num_pim_stack * self.num_pch_per_stack * self.num_bg_per_pch)]
-                for stack in range(self.num_pim_stack):
-                    for pch in range(self.num_pch_per_stack):
-                        for bg in range(self.num_bg_per_pch):
-                            pim_bg_latency[stack * self.num_pch_per_stack * self.num_bg_per_pch + pch * self.num_bg_per_pch + bg] = pim_activated_table[stack][pch][bg] * (self.t_row + 2*self.t_compute * operation_intensity * self.n_compute_per_row) # 2: 1PE FOR 2Banks
-                            pim_bg_energy[stack * self.num_pch_per_stack * self.num_bg_per_pch + pch * self.num_bg_per_pch + bg] = pim_activated_table[stack][pch][bg] * (self.e_row + self.e_read * self.n_compute_per_row + self.e_compute * operation_intensity * self.n_compute_per_row) * self.n_bk_per_bg
-                pim_execute_time =  max(pim_bg_latency) 
-                pim_energy = sum(pim_bg_energy) * self.num_pim_device 
-            else: # pim
                 pim_pch_latency = [0 for _ in range(self.num_pim_stack * self.num_pch_per_stack)]
                 pim_pch_energy = [0 for _ in range(self.num_pim_stack * self.num_pch_per_stack)]
                 for stack in range(self.num_pim_stack):
                     for pch in range(self.num_pch_per_stack):
                         for bg in range(self.num_bg_per_pch):
-                            pim_pch_latency[stack * self.num_pch_per_stack + pch] += pim_activated_table[stack][pch][bg] * (self.t_row + 2 * self.t_compute * operation_intensity  * self.n_compute_per_row)
-                            pim_pch_energy[stack * self.num_pch_per_stack + pch] += pim_activated_table[stack][pch][bg] * (self.e_row + self.e_read * self.n_compute_per_row + self.e_compute * operation_intensity * self.n_compute_per_row) * self.n_bk_per_pch
+                            #print(f"pim_activated_table[stack][pch][bg]: {pim_activated_table[stack][pch][bg]}")
+                            pim_bg_latency[stack * self.num_pch_per_stack * self.num_bg_per_pch + pch * self.num_bg_per_pch + bg] = pim_activated_table[stack][pch][bg] * (self.t_row + 2*self.t_compute * operation_intensity * 32) # 2: 1PE FOR 2Banks
+                            pim_bg_energy[stack * self.num_pch_per_stack * self.num_bg_per_pch + pch * self.num_bg_per_pch + bg] = pim_activated_table[stack][pch][bg] * (self.e_row + self.e_read * 32 + self.e_compute * operation_intensity * 32) * self.n_bk_per_bg
+                            pim_pch_latency[stack * self.num_pch_per_stack + pch] += pim_activated_table[stack][pch][bg] * (self.t_row + 2 * self.t_compute * operation_intensity  * 2)
+                            pim_pch_energy[stack * self.num_pch_per_stack + pch] += pim_activated_table[stack][pch][bg] * (self.e_row + self.e_read * 2 + self.e_compute * operation_intensity * 2) * self.n_bk_per_pch
+                #sparse_pim_latency = np.percentile(pim_bg_latency, 50)
+                sparse_pim_latency = max(pim_bg_latency)
+                sparse_pim_energy = sum(pim_bg_energy) + GPU.energy_table['hbm']*(2*m*n*n_requests+2*m*hit_clusters_counts*16)
+                #pim_latency = np.percentile(pim_pch_latency, 50)
+                pim_latency = max(pim_pch_latency) 
+                pim_energy = sum(pim_pch_energy) + GPU.energy_table['hbm']*(2*m*n*n_requests+2*m*hit_clusters_counts*16)
+                print(f"pim_latency: {pim_latency}, pim_energy: {pim_energy}, sparse_pim_latency: {sparse_pim_latency}, sparse_pim_energy: {sparse_pim_energy}")
+                return pim_latency, pim_energy, sparse_pim_latency, sparse_pim_energy
                 
-                pim_execute_time = max(pim_pch_latency) 
-                pim_energy = sum(pim_pch_energy) * self.num_pim_device 
+            else:
+                if self.sparse_enable: #sparse pim
+                    pim_bg_latency = [0 for _ in range(self.num_pim_stack * self.num_pch_per_stack * self.num_bg_per_pch)]
+                    pim_bg_energy = [0 for _ in range(self.num_pim_stack * self.num_pch_per_stack * self.num_bg_per_pch)]
+                    for stack in range(self.num_pim_stack):
+                        for pch in range(self.num_pch_per_stack):
+                            for bg in range(self.num_bg_per_pch):
+                                pim_bg_latency[stack * self.num_pch_per_stack * self.num_bg_per_pch + pch * self.num_bg_per_pch + bg] = pim_activated_table[stack][pch][bg] * (self.t_row + 2*self.t_compute * operation_intensity * self.n_compute_per_row) # 2: 1PE FOR 2Banks
+                                pim_bg_energy[stack * self.num_pch_per_stack * self.num_bg_per_pch + pch * self.num_bg_per_pch + bg] = pim_activated_table[stack][pch][bg] * (self.e_row + self.e_read * self.n_compute_per_row + self.e_compute * operation_intensity * self.n_compute_per_row) * self.n_bk_per_bg
+                    pim_execute_time =  max(pim_bg_latency) 
+                    pim_energy = sum(pim_bg_energy) * self.num_pim_device 
+                else: # pim
+                    pim_pch_latency = [0 for _ in range(self.num_pim_stack * self.num_pch_per_stack)]
+                    pim_pch_energy = [0 for _ in range(self.num_pim_stack * self.num_pch_per_stack)]
+                    for stack in range(self.num_pim_stack):
+                        for pch in range(self.num_pch_per_stack):
+                            for bg in range(self.num_bg_per_pch):
+                                pim_pch_latency[stack * self.num_pch_per_stack + pch] += pim_activated_table[stack][pch][bg] * (self.t_row + 2 * self.t_compute * operation_intensity  * self.n_compute_per_row)
+                                pim_pch_energy[stack * self.num_pch_per_stack + pch] += pim_activated_table[stack][pch][bg] * (self.e_row + self.e_read * self.n_compute_per_row + self.e_compute * operation_intensity * self.n_compute_per_row) * self.n_bk_per_pch
+                
+                    pim_execute_time = max(pim_pch_latency) 
+                    pim_energy = sum(pim_pch_energy) * self.num_pim_device 
 
             execute_time = 2 * max(pim_execute_time, gpu_execute_time + GPU.mem_init_latency)
             energy = 2 * (pim_energy + gpu_energy)
-            print(f"sparse_enable: {self.sparse_enable}, pim_execute_time: {pim_execute_time}, gpu_execute_time: {gpu_execute_time}, pim_energy: {pim_energy}J, gpu_energy: {gpu_energy}J, total_energy: {energy}J")
+            #print(f"sparse_enable: {self.sparse_enable}, pim_execute_time: {pim_execute_time}, gpu_execute_time: {gpu_execute_time}, pim_energy: {pim_energy}J, gpu_energy: {gpu_energy}J, total_energy: {energy}J")
 
         elif layer.type == LayerType.SpAt_Similarity:
             n_compute = 0
