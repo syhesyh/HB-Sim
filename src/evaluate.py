@@ -209,7 +209,7 @@ class PIM:
                         pim_activated_table[stack][pch][bg] += 1
                         hit_clusters_counts += 1
                     else: # HBF cluster hit
-                        hbf_track_table.update(request_id, 0, cluster_id)
+                        hbf_track_table[request_id].update(request_id, 0, cluster_id)
                         missing_clusters[0][request_id].append(cluster_id)
                         missing_clusters_counts += 1
 

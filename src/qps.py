@@ -191,13 +191,14 @@ if __name__ == "__main__":
     }
 
     ###new request stream
-    Request_Stream = Request_Stream(args.qps, args.activation_ratio, model, initial_request_count=args.request)
 
     tbt_stats = tbt_stats()
 
 
     if args.hw.lower() == "gpu":
         # 注意：这里使用命令行中的 model/length/request，这样和你传参一致
+        request_tracking_table = None
+        Request_Stream = Request_Stream(args.qps, args.activation_ratio, model, initial_request_count=args.request, request_tracking_table=request_tracking_table)
         Host_request_stream = Request_Stream
         Host_pim_profile_table = None
         Host_hbf_track_table = None
@@ -259,12 +260,14 @@ if __name__ == "__main__":
         )
 
     else:
-        PIM_request_stream = Request_Stream
+        request_tracking_table = {}
+        PIM_request_stream = Request_Stream(args.qps, args.activation_ratio, model, initial_request_count=args.request, request_tracking_table=request_tracking_table)
         PIM_pim_profile_table = PIM_Profile_Table(Hardware_config_PIM["PIM"])
         PIM_pim_profile_table.build_profile_table()
 
-        # 把 track table 的参数强制为整数（避免浮点）
-        PIM_hbf_track_table = HBF_Track_Table(int(8*args.request * 4096 / 10))
+        # for request_id, request_info in PIM_request_stream.request_batch.request.items():
+
+        #     request_tracking_table[request_id] = HBF_Track_Table(request_info["total_cluster"] / 10)
 
         pim_energy_stats = energy_stats()
         pim_latency_stats = latency_stats()
@@ -277,7 +280,7 @@ if __name__ == "__main__":
             Hardware_config_PIM,
             request_stream=PIM_request_stream,
             pim_profile_table=PIM_pim_profile_table,
-            hbf_track_table=PIM_hbf_track_table,
+            hbf_track_table=request_tracking_table,
             warmup_iteration=args.warmup,
             scheduling_interval=args.scheduling_interval,
             scheduling_enable=args.scheduling_enable,

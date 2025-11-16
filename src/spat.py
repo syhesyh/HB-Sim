@@ -420,6 +420,7 @@ class HBF_Track_Table():
         self.table = self.entries
         return self.entries
 
+
     def _push_heap(self, key, counts):
         self._heap_counter += 1
         token = self._heap_counter

@@ -1,7 +1,7 @@
 import numpy as np
 import math
 from scipy.stats import zipf
-
+from src.spat import *
 class Request_SpAt_stat():
 
     def __init__(self, total_cluster, n_block, n_kv_head, seed=321, prob_func="zipf"):
@@ -99,7 +99,7 @@ class Request_Batch:
 
         
 class Request_Stream:
-    def __init__(self, poisson_lambda, activation_ratio, modelinfos, initial_request_count=None):
+    def __init__(self, poisson_lambda, activation_ratio, modelinfos, initial_request_count=None, request_tracking_table=None):
         """
         Args:
             poisson_lambda: 泊松分布参数
@@ -111,8 +111,8 @@ class Request_Stream:
         self.activation_ratio = activation_ratio
         self.modelinfos = modelinfos
         self.request_id_counter = 0
-        
-        # 初始化 Request_Batch
+        self.request_tracking_table = request_tracking_table
+        self.activation_ratio = activation_ratio
         self.request_batch = Request_Batch(activation_ratio, modelinfos)
         
         # 生成初始请求序列
@@ -126,7 +126,9 @@ class Request_Stream:
             #n_cluster = total_cluster // 2  # n_cluster 为 total_cluster 的一半
             self.request_id_counter += 1
             self.request_batch.append(self.request_id_counter, n_cluster, total_cluster)
-    
+            if self.request_tracking_table is not None:
+                self.request_tracking_table[self.request_id_counter] = HBF_Track_Table(1.5*total_cluster / self.activation_ratio)
+
     def add_new_requests(self):
         """动态加入新请求，数量遵从泊松分布"""
 
@@ -139,7 +141,8 @@ class Request_Stream:
             n_cluster = np.random.randint(total_cluster//2, total_cluster-1)
             self.request_id_counter += 1
             self.request_batch.append(self.request_id_counter, n_cluster, total_cluster)
-        
+            if self.request_tracking_table is not None:
+                self.request_tracking_table[self.request_id_counter] = HBF_Track_Table(1.5*total_cluster / self.activation_ratio)
         return n_new_requests
     
     def update(self):
@@ -151,5 +154,7 @@ class Request_Stream:
         """
 
         request_to_exit = self.request_batch.update()
-        
+        for request_id in request_to_exit:
+            if self.request_tracking_table is not None:
+                del self.request_tracking_table[request_id]
         return self.request_batch, request_to_exit

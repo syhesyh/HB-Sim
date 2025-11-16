@@ -298,12 +298,13 @@ class System:
 
                 if self.device != DeviceType.GPU and n_iteration % self.scheduling_interval == 0:
                     self.pim_profile_table.leakage_average()
-                    self.hbf_track_table.leakage_average()
                     average_utilization, _, total_variance = self.pim_profile_table._get_balance_meta()
                     self.var_history.append((average_utilization, total_variance, 0)) # 0: no scheduling, 1: scheduling
-                    _,n_promotions = promotion(self.hbf_track_table, self.pim_profile_table, 4096)
-                    print(f"n_promotions: {n_promotions}")
                     print(f"request_batch: {len(self.request_batch.request)}, average_utilization: {average_utilization}, total_variance: {total_variance}")
+                    for request_id in self.hbf_track_table.keys():
+                        self.hbf_track_table[request_id].leakage_average()
+                        _,n_promotions = promotion(self.hbf_track_table[request_id], self.pim_profile_table, 4096)
+                        print(f"n_promotions: {n_promotions}")
                     if warmup_finish == 1:
                         self.energy_stats["promotion"] += 2 * n_promotions * (2*2*128*16) * (self.GPU.energy_table['hbm'] + self.GPU.energy_table['hbm']) * self.n_device
                         self.latency_stats["promotion"] +=  n_promotions * (2*2*128*16) / self.GPU.hbf_memory_bandwidth + n_promotions * (2*2*128*16) / self.GPU.hbm_memory_bandwidth
