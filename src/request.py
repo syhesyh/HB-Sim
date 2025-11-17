@@ -11,16 +11,13 @@ class Request_SpAt_stat():
         self.total_cluster = total_cluster
         self.n_block = n_block
         self.activated_prob_table=[[[0 for _ in range(total_cluster)] for _ in range(n_kv_head)] for _ in range(n_block)]
-        # 如果seed为None，不设置种子，使用系统时间作为随机源（完全随机）
-        # 如果用户需要固定种子用于调试，可以传入具体的seed值
+
         if seed is not None:
             np.random.seed(seed)
-        # 否则不设置种子，让numpy使用默认的随机状态（基于系统时间）
-        
+        #print(f"seed: {seed}")
         for block in range(n_block):
             for kv_head in range(1):
-                # 不再修改seed，保持随机性
-                # seed = seed + 1
+                
                 if prob_func == "power_law":
                     # 生成幂律分布的概率
                     indices = np.arange(1, total_cluster + 1)
@@ -56,8 +53,6 @@ class Request_SpAt_stat():
         
     def get_activated_prob(self, block, kv_head, n_clusters):
         # 已存在的cluster归一化
-        # 不需要重新设置种子，保持随机状态
-        # np.random.seed(seed)  # 移除此行，seed变量未定义且不需要固定种子
         return self.activated_prob_table[block][kv_head][:n_clusters]/self.activated_prob_table[block][kv_head][:n_clusters].sum()
 
 
@@ -65,16 +60,19 @@ class Request_SpAt_stat():
 
 class Request_Batch:
 
-    def __init__(self, activation_ratio, modelinfos):
+    def __init__(self, activation_ratio, modelinfos, seed=None):
         self.n_kv_head = modelinfos["n_kv_head"]
         self.n_block = modelinfos["n_block"]
         self.activation_ratio = activation_ratio
         self.activated_clusters = {}
         self.request = {}
-
+        self.seed =seed
+        # 创建随机数生成器对象，如果提供了seed则使用它，否则使用系统时间
+        self.randomstate = np.random.RandomState(seed)
+        
     def append(self, id, input_cluster, total_cluster):
-        # 使用随机种子（传入None），不再使用id作为固定种子
-        activation_table = Request_SpAt_stat(total_cluster, 1, 1, seed=None)
+        # id as random seed
+        activation_table = Request_SpAt_stat(total_cluster, 1, 1, self.seed)
         self.request[id] = {"n_cluster": input_cluster, "n_activated_clusters": math.ceil(input_cluster*self.activation_ratio), "total_cluster": total_cluster, "activation_table": activation_table}
         return self.request
 
@@ -97,7 +95,14 @@ class Request_Batch:
         for request_id in self.request.keys():
             ## 生成当前cluster的概率表，进行不放回抽样
             temp_act_table = self.request[request_id]["activation_table"].get_activated_prob(layer_id, kv_head_id, self.request[request_id]["n_cluster"])
-            activated_clusters[request_id] = np.random.choice(self.request[request_id]["n_cluster"], self.request[request_id]["n_activated_clusters"], replace=False, p=temp_act_table)
+            # 使用实例的随机状态生成器，可以传入随机种子控制随机性
+            # 使用 request_id 作为额外的随机种子，确保不同 request 有不同的随机序列
+            activated_clusters[request_id] = self.randomstate.choice(
+                self.request[request_id]["n_cluster"], 
+                self.request[request_id]["n_activated_clusters"], 
+                replace=False, 
+                p=temp_act_table
+            )
         return activated_clusters
 
 
@@ -131,7 +136,7 @@ class Request_Stream:
     def generate_initial_requests(self, initial_request_count):
         """生成初始请求序列"""
         for _ in range(initial_request_count):
-            total_cluster = np.random.randint(256, 4096)  # 4096-16384 之间的随机数
+            total_cluster = np.random.randint(512, 4096)  # 4096-16384 之间的随机数
             n_cluster = np.random.randint(total_cluster//2, total_cluster-1)
             #n_cluster = total_cluster // 2  # n_cluster 为 total_cluster 的一半
             self.request_id_counter += 1

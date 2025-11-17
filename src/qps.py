@@ -83,12 +83,12 @@ def parse_args():
     parser.add_argument("--scheduling_interval", type=int, default=16,
                         help="Scheduling interval (default: 64)")
 
-    parser.add_argument("--dynamic_enable", type=str_to_bool, default=False,
+    parser.add_argument("--dynamic_enable", type=str_to_bool, default=True,
                         help="Dynamic enable: True or False (default: True)")
 
     parser.add_argument("--scheduling_enable", type=str_to_bool, default=True,
                         help="Scheduling enable: True or False (default: True)")
-    parser.add_argument("--test_mode", type=str_to_bool, default=True,
+    parser.add_argument("--test_mode", type=str_to_bool, default=False,
                         help="Test mode: True or False (default: True)")
     parser.add_argument("--qps", type=float, default=4,
                         help="QPS (default: 4)")
@@ -101,7 +101,8 @@ def parse_args():
     parser.add_argument("--stats_output_dir", type=str, default="../output/stats",
                         help="Output directory (default: ../output/qps/qps.csv)")
     parser.add_argument("--sparse_enable", type=str_to_bool, default=True,)
-
+    parser.add_argument("--seed", type=int, default=None,
+                        help="Seed (default: None)")
     return parser.parse_args()
 
 
@@ -209,6 +210,7 @@ def write_pim_stats_csv(output_dir, model_name, length, request, sparse_enable, 
 
 
 if __name__ == "__main__":
+
     args = parse_args()
 
     print("========== Simulation Settings ==========")
@@ -307,15 +309,15 @@ if __name__ == "__main__":
 
     else:
         request_tracking_table = {}
-        #PIM_request_stream = Request_Stream(args.qps, args.activation_ratio, model, initial_request_count=args.request, request_tracking_table=request_tracking_table, dynamic_enable=args.dynamic_enable)
-        PIM_request_stream = None
+        PIM_request_stream = Request_Stream(args.qps, args.activation_ratio, model, initial_request_count=args.request, request_tracking_table=request_tracking_table, dynamic_enable=args.dynamic_enable)
+        #PIM_request_stream = None
         PIM_pim_profile_table = PIM_Profile_Table(Hardware_config_PIM["PIM"])
         PIM_pim_profile_table.build_profile_table()
         
-        PIM_request_batch = Request_Batch(0.10, Model)
-        for i in range(args.request):
-            PIM_request_batch.append(i, args.length+256, args.length+256+256+4)
-        for request_id, request_info in PIM_request_batch.request.items():
+        # PIM_request_batch = Request_Batch(0.10, Model, args.seed)
+        # for i in range(args.request):
+        #     PIM_request_batch.append(i, args.length+256, args.length+256+256+4)
+        for request_id, request_info in PIM_request_stream.request_batch.request.items():
 
             request_tracking_table[request_id] = HBF_Track_Table(1.5*request_info["total_cluster"] / 10)
 
@@ -330,7 +332,7 @@ if __name__ == "__main__":
             tbt_stats,
             model,
             Hardware_config_PIM,
-            request_batch=PIM_request_batch,
+            request_batch=PIM_request_stream.request_batch,
             request_stream=PIM_request_stream,
             pim_profile_table=PIM_pim_profile_table,
             hbf_track_table=request_tracking_table,
@@ -341,13 +343,15 @@ if __name__ == "__main__":
             pim_stats=pim_stats,
             test_mode=args.test_mode
         )
-
         pim_system.system_setup()
-        pim_latency, pim_energy,sparse_pim_latency, sparse_pim_energy = pim_system.sim(max_iteration=args.max_iter)
-        pim_stats["sparse_pim_latency"] = sparse_pim_latency
-        pim_stats["sparse_pim_energy"] = sparse_pim_energy
-        pim_stats["pim_latency"] = pim_latency
-        pim_stats["pim_energy"] = pim_energy
+        pim_system.sim(max_iteration=args.max_iter)
+
+        # pim_system.system_setup()
+        # pim_latency, pim_energy,sparse_pim_latency, sparse_pim_energy = pim_system.sim(max_iteration=args.max_iter)
+        # pim_stats["sparse_pim_latency"] = sparse_pim_latency
+        # pim_stats["sparse_pim_energy"] = sparse_pim_energy
+        # pim_stats["pim_latency"] = pim_latency
+        # pim_stats["pim_energy"] = pim_energy
 
         print("\n========== Simulation Finished ==========")
         print(f"pim_energy : {pim_system.energy_stats}")

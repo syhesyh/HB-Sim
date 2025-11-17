@@ -245,7 +245,7 @@ class PIM:
 
                 
             # PIM execution
-            test =1
+            test =0
             if test:
                 pim_execute_time = 0
                 pim_energy = 0
@@ -261,13 +261,13 @@ class PIM:
                             pim_bg_energy[stack * self.num_pch_per_stack * self.num_bg_per_pch + pch * self.num_bg_per_pch + bg] = pim_activated_table[stack][pch][bg] * (self.e_row + self.e_read * 32 + self.e_compute * operation_intensity * 32) * self.n_bk_per_bg
                             pim_pch_latency[stack * self.num_pch_per_stack + pch] += pim_activated_table[stack][pch][bg] * (self.t_row + 2 * self.t_compute * operation_intensity  * 2)
                             pim_pch_energy[stack * self.num_pch_per_stack + pch] += pim_activated_table[stack][pch][bg] * (self.e_row + self.e_read * 2 + self.e_compute * operation_intensity * 2) * self.n_bk_per_pch
-                #sparse_pim_latency = np.percentile(pim_bg_latency, 50)
-                sparse_pim_latency = max(pim_bg_latency)
+                sparse_pim_latency = np.percentile(pim_bg_latency, 50)
+                #sparse_pim_latency = max(pim_bg_latency)
                 sparse_pim_energy = sum(pim_bg_energy) + GPU.energy_table['hbm']*(2*m*n*n_requests+2*m*hit_clusters_counts*16)
-                #pim_latency = np.percentile(pim_pch_latency, 50)
-                pim_latency = max(pim_pch_latency) 
+                pim_latency = np.percentile(pim_pch_latency, 50)
+                #pim_latency = max(pim_pch_latency) 
                 pim_energy = sum(pim_pch_energy) + GPU.energy_table['hbm']*(2*m*n*n_requests+2*m*hit_clusters_counts*16)
-                print(f"pim_latency: {pim_latency}, pim_energy: {pim_energy}, sparse_pim_latency: {sparse_pim_latency}, sparse_pim_energy: {sparse_pim_energy}")
+                #print(f"pim_latency: {pim_latency}, pim_energy: {pim_energy}, sparse_pim_latency: {sparse_pim_latency}, sparse_pim_energy: {sparse_pim_energy}")
                 return pim_latency, pim_energy, sparse_pim_latency, sparse_pim_energy
                 
             else:
@@ -279,7 +279,8 @@ class PIM:
                             for bg in range(self.num_bg_per_pch):
                                 pim_bg_latency[stack * self.num_pch_per_stack * self.num_bg_per_pch + pch * self.num_bg_per_pch + bg] = pim_activated_table[stack][pch][bg] * (self.t_row + 2*self.t_compute * operation_intensity * self.n_compute_per_row) # 2: 1PE FOR 2Banks
                                 pim_bg_energy[stack * self.num_pch_per_stack * self.num_bg_per_pch + pch * self.num_bg_per_pch + bg] = pim_activated_table[stack][pch][bg] * (self.e_row + self.e_read * self.n_compute_per_row + self.e_compute * operation_intensity * self.n_compute_per_row) * self.n_bk_per_bg
-                    pim_execute_time =  max(pim_bg_latency) 
+                    pim_execute_time = np.percentile(pim_bg_latency, 50)
+                    #pim_execute_time =  max(pim_bg_latency) 
                     pim_energy = sum(pim_bg_energy) * self.num_pim_device 
                 else: # pim
                     pim_pch_latency = [0 for _ in range(self.num_pim_stack * self.num_pch_per_stack)]

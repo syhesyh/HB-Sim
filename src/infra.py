@@ -39,6 +39,7 @@ class System:
         self.GPU = None
         self.pim_stats = pim_stats
         self.test_mode = test_mode
+        self.serving_timing_scaling=10
     def get_offloading_ratio(self):
         if self.dynamic_enable is False:
             model_mem = 2 *480 * 1e9
@@ -319,12 +320,13 @@ class System:
                 n_iteration += 1
                 if self.device != DeviceType.GPU:
                     average_utilization, _, total_variance = self.pim_profile_table._get_balance_meta()
-                    self.tbt_stats.append((len(self.request_batch.request), iteration_latency, average_utilization, total_variance/average_utilization, (n_iteration % self.scheduling_interval)))
+                    self.tbt_stats.append((len(self.request_batch.request), iteration_latency, average_utilization, total_variance/average_utilization if average_utilization > 0 else 0, (n_iteration % self.scheduling_interval==0)))
                 else:
                     self.tbt_stats.append((len(self.request_batch.request), iteration_latency, 0, 0, 0))
 
                 print(f"iteration {n_iteration}, request_batch_size: {len(self.request_batch.request)}, iteration_energy: {iteration_energy}, iteration_mem_energy: {iteration_mem_energy}, iteration_latency: {iteration_latency}")
-                request_to_exit = self.request_batch.update()
+                for i in range(self.serving_timing_scaling):
+                    request_to_exit = self.request_batch.update()
                 if len(request_to_exit) > 0:
                     print(f"request_to_exit: {request_to_exit}")
                 if len(request_to_exit) and self.device != DeviceType.GPU:
@@ -369,7 +371,7 @@ class System:
                                 #print(f"Promotion LRU")
                                 _,n_promotions = promotion_lru(self.hbf_track_table[request_id], self.pim_profile_table, 4096)
                                 #print(f"n_promotions: {n_promotions}")
-                    scheduling_success = 1
+                    #scheduling_success = 1
                             # if self.scheduling_enable and n_iteration % self.scheduling_interval == 0:
                             #     n_swaps = 0
                             #     print(f"Load Balance")
@@ -382,7 +384,7 @@ class System:
 
             # dynamic arrival request
             if self.dynamic_enable:
-                now_time += iteration_latency*self.modelinfos["cluster_size"]
+                now_time += iteration_latency*self.modelinfos["cluster_size"]*self.serving_timing_scaling
                 if iteration_latency > 2:
                     break
                 if now_time > last_update_time + 1:

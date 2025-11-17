@@ -1,0 +1,10 @@
+========== 任务开始: pim_llama4_qps1.5_scheduling_True_scheduling_interval_16_length_1024_request_256 ==========
+开始时间: 2025-11-17 19:46:02
+命令: /home/syhe/miniconda3/envs/sim/bin/python src/qps.py --hw pim --model llama4 --qps 1.5 --length 1024 --request 256 --warmup 0 --scheduling_interval 16 --max_iter 512 --activation_ratio 0.1 --scheduling_enable True --tbt_output_dir ./output/qps --stats_output_dir ./output/stats --seed 2123257116
+============================================================
+
+
+============================================================
+结束时间: 2025-11-17 19:46:08
+返回码: -9
+========== 任务结束: pim_llama4_qps1.5_scheduling_True_scheduling_interval_16_length_1024_request_256 ==========

@@ -1,0 +1,5 @@
+model,sparse_enable,scheduling_enable,qps,hardware_name,iteration,request_batch_size,iteration_latency,average_utilization,normalized_variance,scheduling_remainder
+llama4,True,False,0.0,pim,1,64,0.003920814922700326,0.0,nan,1
+llama4,True,False,0.0,pim,2,64,0.003920814922700326,0.0,nan,2
+llama4,True,False,0.0,pim,3,64,0.003920814922700326,0.0,nan,3
+llama4,True,False,0.0,pim,4,64,0.003920814922700326,0.0,nan,0

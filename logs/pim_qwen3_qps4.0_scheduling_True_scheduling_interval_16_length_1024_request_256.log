@@ -1,0 +1,10 @@
+========== 任务开始: pim_qwen3_qps4.0_scheduling_True_scheduling_interval_16_length_1024_request_256 ==========
+开始时间: 2025-11-17 19:46:03
+命令: /home/syhe/miniconda3/envs/sim/bin/python src/qps.py --hw pim --model qwen3 --qps 4.0 --length 1024 --request 256 --warmup 0 --scheduling_interval 16 --max_iter 512 --activation_ratio 0.1 --scheduling_enable True --tbt_output_dir ./output/qps --stats_output_dir ./output/stats --seed 646172627
+============================================================
+
+
+============================================================
+结束时间: 2025-11-17 19:46:14
+返回码: -9
+========== 任务结束: pim_qwen3_qps4.0_scheduling_True_scheduling_interval_16_length_1024_request_256 ==========
