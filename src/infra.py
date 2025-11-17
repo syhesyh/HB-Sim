@@ -15,7 +15,7 @@ import math
 class System:
 
     def __init__(self, energy_stats, latency_stats, tbt_stats, modelinfos=None, hardware_config=None,request_batch:Request_Batch=None, request_stream:Request_Stream=None, pim_profile_table:PIM_Profile_Table=None, \
-        hbf_track_table:HBF_Track_Table=None, warmup_iteration=1024, scheduling_interval=64, scheduling_enable=False, dynamic_enable=False, pim_stats=None, test_mode=False):
+        hbf_track_table:HBF_Track_Table=None, warmup_iteration=1024, scheduling_interval=64, scheduling_enable=False, dynamic_enable=False, pim_stats=None, test_mode=False, offloading_enable=True):
         self.energy_stats = energy_stats
         self.latency_stats = latency_stats
         self.tbt_stats = tbt_stats
@@ -40,6 +40,8 @@ class System:
         self.pim_stats = pim_stats
         self.test_mode = test_mode
         self.serving_timing_scaling=10
+        self.offloading_enable = offloading_enable
+        print(f"offloading_enable: {self.offloading_enable}")
     def get_offloading_ratio(self):
         if self.dynamic_enable is False:
             model_mem = 2 *480 * 1e9
@@ -55,7 +57,9 @@ class System:
             self.offloading_ratio = 0
         else:
             self.offloading_ratio = (kv_cache_mem-(gpu_mem - model_mem)) / kv_cache_mem
-        self.offloading_ratio = 0
+
+        if self.offloading_enable is False:
+            self.offloading_ratio = 0
 
         if self.GPU is not None:
             self.GPU.offloading_ratio = self.offloading_ratio

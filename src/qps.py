@@ -103,6 +103,8 @@ def parse_args():
     parser.add_argument("--sparse_enable", type=str_to_bool, default=True,)
     parser.add_argument("--seed", type=int, default=None,
                         help="Seed (default: None)")
+    parser.add_argument("--offloading_enable", type=str_to_bool, default=True,
+                        help="Offloading enable: True or False (default: True)")
     return parser.parse_args()
 
 
@@ -268,7 +270,8 @@ if __name__ == "__main__":
             scheduling_interval=args.scheduling_interval,
             scheduling_enable=args.scheduling_enable,
             dynamic_enable=args.dynamic_enable,
-            test_mode=args.test_mode
+            test_mode=args.test_mode,
+            offloading_enable=args.offloading_enable
         )
         gpu_system.system_setup()
         gpu_system.sim(max_iteration=args.max_iter)
