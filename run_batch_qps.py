@@ -20,11 +20,12 @@ if current_dir not in sys.path:
 # 参数组合
 HARDWARE_TYPES = ["pim"]
 MODELS = ["llama4", "qwen3"]
-Scheduling_enable = [ "True"]
+Scheduling_enable = ["True"]
+Offloading_enable = ["True","False"]
 Scheduling_interval = [16]
 Length = [1024]
 Request = [256]
-QPS_VALUES = [1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5]
+QPS_VALUES = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0]
 #QPS_VALUES = [0]
 Seeds= np.random.randint(0, 2**31 - 1, size=1000)
 # 默认参数
@@ -42,12 +43,12 @@ DEFAULT_ARGS = {
 print_lock = multiprocessing.Lock()
 
 
-def run_qps_simulation(hw, model, qps, scheduling_enable, scheduling_interval, length, request, np_seed=None, randomstate=None, **kwargs):
+def run_qps_simulation(hw, model, qps, scheduling_enable, offloading_enable, scheduling_interval, length, request, np_seed=None, randomstate=None, **kwargs):
     """
     运行QPS仿真
     
     Args:
-        hw, model, qps, scheduling_enable, scheduling_interval, length, request: 仿真参数
+        hw, model, qps, scheduling_enable, offloading_enable, scheduling_interval, length, request: 仿真参数
         seed: 随机种子
         randomstate: numpy RandomState 对象，用于生成随机种子
         **kwargs: 其他参数
@@ -72,13 +73,14 @@ def run_qps_simulation(hw, model, qps, scheduling_enable, scheduling_interval, l
         "--max_iter", str(kwargs.get("max_iter", DEFAULT_ARGS["max_iter"])),
         "--activation_ratio", str(kwargs.get("activation_ratio", DEFAULT_ARGS["activation_ratio"])),
         "--scheduling_enable", str(scheduling_enable),
+        "--offloading_enable", str(offloading_enable),
         "--tbt_output_dir", str(kwargs.get("tbt_output_dir", DEFAULT_ARGS["tbt_output_dir"])),
         "--stats_output_dir", str(kwargs.get("stats_output_dir", DEFAULT_ARGS["stats_output_dir"])),
         "--seed", str(np_seed),
     ]
     
     
-    task_name = f"{hw}_{model}_qps{qps}_scheduling_{scheduling_enable}_scheduling_interval_{scheduling_interval}_length_{length}_request_{request}"
+    task_name = f"{hw}_{model}_qps{qps}_scheduling_{scheduling_enable}_offloading_{offloading_enable}_scheduling_interval_{scheduling_interval}_length_{length}_request_{request}"
     
     # 创建日志目录
     log_dir = kwargs.get("log_dir", DEFAULT_ARGS["log_dir"])
@@ -171,13 +173,24 @@ def main():
                 for length in Length:
                     for request in Request:
                         for scheduling_enable in Scheduling_enable:
-                            for scheduling_interval in Scheduling_interval:
-                                # if scheduling_enable == "True" and scheduling_interval == 64:
-                                #    tasks.append((hw, model, qps, scheduling_enable, scheduling_interval, length, request, Seeds[i]))
-                                # if scheduling_enable == "False" and scheduling_interval == 4:
-                                #     tasks.append((hw, model, qps, scheduling_enable, scheduling_interval, length, request, Seeds[i]))
-                                tasks.append((hw, model, qps, scheduling_enable, scheduling_interval, length, request, Seeds[i]))
-                                i += 1
+                            for offloading_enable in Offloading_enable:
+                                for scheduling_interval in Scheduling_interval:
+                                    if hw == "pim" and offloading_enable == "False":
+                                        continue
+                                    tasks.append(
+                                        (
+                                            hw,
+                                            model,
+                                            qps,
+                                            scheduling_enable,
+                                            offloading_enable,
+                                            scheduling_interval,
+                                            length,
+                                            request,
+                                            Seeds[i],
+                                        )
+                                    )
+                                    i += 1
 
     
     total_tasks = len(tasks)
@@ -208,7 +221,7 @@ def main():
     # 进程执行函数
     def process_task(task_info, index, randomstate, np_seed, completed_count, completed_lock, failed_list, main_log_file, total_tasks):
         """在进程中执行任务"""
-        hw, model, qps, scheduling_enable, scheduling_interval, length, request, seed = task_info
+        hw, model, qps, scheduling_enable, offloading_enable, scheduling_interval, length, request, seed = task_info
         
         # 每个进程启动前延迟1秒（第一个任务不延迟）
         if index > 0:
@@ -216,7 +229,7 @@ def main():
         
         try:
             success, task_name, error = run_qps_simulation(
-                hw, model, qps, scheduling_enable, scheduling_interval, length, request,
+                hw, model, qps, scheduling_enable, offloading_enable, scheduling_interval, length, request,
                 randomstate=randomstate,
                 np_seed=np_seed
             )
@@ -248,7 +261,7 @@ def main():
                 completed_count.value += 1
                 local_completed = completed_count.value
             
-            task_name = f"{hw}_{model}_qps{qps}_scheduling_{scheduling_enable}_scheduling_interval_{scheduling_interval}_length_{length}_request_{request}"
+            task_name = f"{hw}_{model}_qps{qps}_scheduling_{scheduling_enable}_offloading_{offloading_enable}_scheduling_interval_{scheduling_interval}_length_{length}_request_{request}"
             failed_list.append((task_name, str(e)))
             
             with open(main_log_file, 'a', encoding='utf-8') as main_log:

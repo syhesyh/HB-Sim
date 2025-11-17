@@ -140,17 +140,17 @@ def write_stats_csv(output_dir, model_name, length, request, sparse_enable, sche
     print(f"[CSV] 已写入结果到 {csv_file}")
 
 
-def write_tbt_csv(output_dir, model_name, sparse_enable, scheduling_enable, qps, hardware_name, tbt_stats_list):
+def write_tbt_csv(output_dir, model_name, sparse_enable, scheduling_enable, offloading_enable, qps, hardware_name, tbt_stats_list):
     """
-    将 tbt_stats、qps、model、hardware_name 保存为 CSV
+    将 tbt_stats、qps、model、hardware_name 及 offloading_enable 保存为 CSV
     文件名: tbt_stats_{model}_{qps}_{hardware_name}.csv
-    列: model, qps, hardware_name, iteration, request_batch_size, iteration_latency, 
-        average_utilization, normalized_variance, scheduling_remainder
+    列: model, sparse_enable, scheduling_enable, offloading_enable, qps, hardware_name, iteration,
+        request_batch_size, iteration_latency, average_utilization, normalized_variance, scheduling_remainder
     """
     # 确保输出目录存在
     os.makedirs(output_dir, exist_ok=True)
     
-    csv_file = f"{output_dir}/tbt_stats_{model_name}_sparse_{sparse_enable}_scheduling_{scheduling_enable}_qps_{qps}_hardware_{hardware_name}.csv"
+    csv_file = f"{output_dir}/tbt_stats_{model_name}_sparse_{sparse_enable}_scheduling_{scheduling_enable}_offloading_{offloading_enable}_qps_{qps}_hardware_{hardware_name}.csv"
     if not os.path.exists(output_dir):
         os.makedirs(output_dir, exist_ok=True)
     write_header = not os.path.exists(csv_file)
@@ -159,7 +159,7 @@ def write_tbt_csv(output_dir, model_name, sparse_enable, scheduling_enable, qps,
         writer = csv.writer(f)
         if write_header:
             header = [
-                "model", "sparse_enable", "scheduling_enable", "qps", "hardware_name", "iteration", 
+                "model", "sparse_enable", "scheduling_enable", "offloading_enable", "qps", "hardware_name", "iteration", 
                 "request_batch_size", "iteration_latency", 
                 "average_utilization", "normalized_variance", "scheduling_remainder"
             ]
@@ -169,7 +169,7 @@ def write_tbt_csv(output_dir, model_name, sparse_enable, scheduling_enable, qps,
         # tbt_stats_list 中每个元素是: (request_batch_size, iteration_latency, average_utilization, normalized_variance, scheduling_remainder)
         for iteration, (request_batch_size, iteration_latency, average_utilization, normalized_variance, scheduling_remainder) in enumerate(tbt_stats_list, start=1):
             row = [
-                model_name, sparse_enable, scheduling_enable, qps, hardware_name, iteration,
+                model_name, sparse_enable, scheduling_enable, offloading_enable, qps, hardware_name, iteration,
                 request_batch_size, iteration_latency,
                 average_utilization, normalized_variance, scheduling_remainder
             ]
@@ -305,6 +305,7 @@ if __name__ == "__main__":
             args.model,
             args.sparse_enable,
             args.scheduling_enable,
+            args.offloading_enable,
             args.qps,
             "gpu",
             gpu_system.tbt_stats
@@ -383,6 +384,7 @@ if __name__ == "__main__":
             args.model,
             args.sparse_enable,
             args.scheduling_enable,
+            args.offloading_enable,
             args.qps,
             "pim",
             pim_system.tbt_stats
